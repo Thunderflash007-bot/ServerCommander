@@ -19,7 +19,7 @@ model User {
   username     String    @unique
   passwordHash String
   displayName  String?
-  role         Role      @default(USER)
+  role         String    @default("USER")
   isActive     Boolean   @default(true)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -42,11 +42,6 @@ model Session {
 
   @@index([token])
   @@index([userId])
-}
-
-enum Role {
-  ADMIN
-  USER
 }
 
 // ── Master Permission Document (1-to-1 with User) ────────────────────────────

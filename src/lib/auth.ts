@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { db } from "./db";
-import type { User, Role } from "@prisma/client";
+import type { User } from "@prisma/client";
 
 const SESSION_COOKIE = "sc_session";
 const SESSION_MAX_AGE = parseInt(process.env.SESSION_MAX_AGE ?? "28800", 10);
@@ -17,7 +17,7 @@ function getJwtSecret() {
 export interface SessionPayload {
   userId: string;
   username: string;
-  role: Role;
+  role: string;
   sessionId: string;
 }
 
@@ -45,7 +45,7 @@ export async function verifyToken(token: string): Promise<SessionPayload | null>
 export async function createSession(
   userId: string,
   username: string,
-  role: Role,
+  role: string,
   meta?: { userAgent?: string; ipAddress?: string }
 ): Promise<string> {
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
