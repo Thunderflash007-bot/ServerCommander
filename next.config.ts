@@ -1,11 +1,17 @@
-import type { NextConfig } from "next";
+type LocalWebpackConfig = {
+  externals?: unknown[];
+};
 
-const nextConfig: NextConfig = {
+type LocalWebpackContext = {
+  isServer: boolean;
+};
+
+const nextConfig = {
   output: "standalone",
   experimental: {
     serverComponentsExternalPackages: ["dockerode", "node-pty", "@prisma/client"],
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config: LocalWebpackConfig, { isServer }: LocalWebpackContext) => {
     if (isServer) {
       config.externals = [...(config.externals || []), "node-pty"];
     }
