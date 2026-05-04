@@ -1,8 +1,20 @@
 import { getCurrentUser } from "@/lib/auth";
 import { canAccessTerminal } from "@/lib/rbac";
 import type { FullPermissions } from "@/lib/rbac";
-import { TerminalManager } from "@/components/terminal/TerminalManager";
 import { redirect } from "next/navigation";
+import dynamic from "next/dynamic";
+
+const TerminalManager = dynamic(
+  () => import("@/components/terminal/TerminalManager").then((module) => module.TerminalManager),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center rounded-xl border border-border bg-card text-sm text-muted-foreground">
+        Initializing terminal...
+      </div>
+    ),
+  }
+);
 
 export default async function TerminalPage() {
   const user = await getCurrentUser();

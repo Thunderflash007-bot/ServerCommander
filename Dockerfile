@@ -34,6 +34,8 @@ RUN apk add --no-cache \
     openssl \
     bash \
     curl \
+    docker-cli \
+    docker-cli-compose \
     python3 \
     make \
     g++ \

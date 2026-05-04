@@ -12,6 +12,7 @@ import {
   ScrollText,
   ChevronLeft,
   Menu,
+  Layers3,
 } from "lucide-react";
 import { useState } from "react";
 import type { UserPermission } from "@prisma/client";
@@ -29,6 +30,7 @@ interface SidebarProps {
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, always: true },
   { href: "/containers", label: "Containers", icon: Container, perm: "dockerAccess" as const },
+  { href: "/stacks", label: "Stacks", icon: Layers3, perm: "dockerAccess" as const },
   { href: "/files", label: "Files", icon: FolderOpen, perm: "fsAccess" as const },
   { href: "/terminal", label: "Terminal", icon: Terminal, perm: "terminalAccess" as const },
   { href: "/users", label: "Users", icon: Users, adminOnly: true },
