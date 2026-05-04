@@ -17,6 +17,19 @@ const handle = app.getRequestHandler();
 // Track active terminal sessions per user
 const userSessionCount = new Map();
 
+function hasContainerExecPermission(perms, containerId) {
+  if (!perms || !containerId) return false;
+  if (perms.dockerViewAll && perms.terminalAccess) return true;
+
+  return perms.containerPerms.some(
+    (entry) =>
+      entry.canExec &&
+      (entry.containerId === containerId ||
+        containerId.startsWith(entry.containerId) ||
+        entry.containerId.startsWith(containerId))
+  );
+}
+
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
   if (!secret || secret.length < 32) {
@@ -82,6 +95,9 @@ app.prepare().then(() => {
       const session = await verifySessionToken(token);
       const perms = await prisma.userPermission.findUnique({
         where: { userId: session.userId },
+        include: {
+          containerPerms: true,
+        },
       });
 
       if (!perms || !perms.terminalAccess) {
@@ -92,6 +108,21 @@ app.prepare().then(() => {
       socket.data.username = session.username;
       socket.data.readOnly = perms.terminalReadOnly;
       socket.data.maxSessions = perms.terminalMaxSessions;
+
+      const mode = String(socket.handshake.query?.mode ?? "host");
+      const containerId = String(socket.handshake.query?.containerId ?? "");
+
+      if (mode === "container") {
+        if (!containerId) {
+          return next(new Error("Missing containerId"));
+        }
+        if (!hasContainerExecPermission(perms, containerId)) {
+          return next(new Error("Container exec denied"));
+        }
+      }
+
+      socket.data.mode = mode;
+      socket.data.containerId = containerId;
       next();
     } catch {
       return next(new Error("Invalid session"));
@@ -101,6 +132,8 @@ app.prepare().then(() => {
   terminalNs.on("connection", (socket) => {
     const userId = socket.data.userId;
     const readOnly = socket.data.readOnly;
+    const mode = socket.data.mode;
+    const containerId = socket.data.containerId;
 
     // Enforce max sessions
     const current = userSessionCount.get(userId) ?? 0;
@@ -112,20 +145,36 @@ app.prepare().then(() => {
     }
     userSessionCount.set(userId, current + 1);
 
-    const shell = process.env.SHELL ?? "/bin/bash";
     const cwd = process.env.HOST_FS_MOUNT ?? "/host_system";
 
-    const ptyProcess = pty.spawn(shell, [], {
-      name: "xterm-256color",
-      cols: 80,
-      rows: 24,
-      cwd: cwd,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-      },
-    });
+    const ptyProcess =
+      mode === "container"
+        ? pty.spawn(
+            "docker",
+            ["exec", "-it", containerId, "/bin/sh"],
+            {
+              name: "xterm-256color",
+              cols: 80,
+              rows: 24,
+              cwd,
+              env: {
+                ...process.env,
+                TERM: "xterm-256color",
+                COLORTERM: "truecolor",
+              },
+            }
+          )
+        : pty.spawn(process.env.SHELL ?? "/bin/bash", [], {
+            name: "xterm-256color",
+            cols: 80,
+            rows: 24,
+            cwd,
+            env: {
+              ...process.env,
+              TERM: "xterm-256color",
+              COLORTERM: "truecolor",
+            },
+          });
 
     ptyProcess.onData((data) => socket.emit("output", data));
 

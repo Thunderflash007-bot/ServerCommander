@@ -6,7 +6,7 @@ import { docker } from "@/lib/docker";
 
 const execFileAsync = promisify(execFile);
 const HOST_ROOT = process.env.HOST_FS_MOUNT ?? "/host_system";
-const STACKS_DIR = path.join(HOST_ROOT, "opt", "servercommander", "stacks");
+const STACKS_DIR = path.join("/app", "data", "stacks");
 
 export interface StackSummary {
   name: string;

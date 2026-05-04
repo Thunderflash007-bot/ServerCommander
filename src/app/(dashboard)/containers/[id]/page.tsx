@@ -1,7 +1,19 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getContainerInspect } from "@/lib/docker";
-import { canAccessDocker, canInspectContainer, type FullPermissions } from "@/lib/rbac";
+import {
+  canAccessDocker,
+  canDeleteContainer,
+  canExecContainer,
+  canInspectContainer,
+  canRestartContainer,
+  canStartContainer,
+  canStopContainer,
+  canViewLogs,
+  type FullPermissions,
+} from "@/lib/rbac";
+import Link from "next/link";
+import { ContainerDetailsActions } from "@/components/docker/ContainerDetailsActions";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -29,7 +41,7 @@ export default async function ContainerInspectPage({ params }: Params) {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Container Inspect</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Container Details</h1>
         <p className="text-muted-foreground text-sm mt-1 font-mono break-all">{id}</p>
       </div>
 
@@ -38,9 +50,40 @@ export default async function ContainerInspectPage({ params }: Params) {
           {error}
         </div>
       ) : (
-        <pre className="overflow-auto rounded-xl border border-border bg-card p-4 text-xs text-foreground whitespace-pre-wrap break-all">
-          {JSON.stringify(inspect, null, 2)}
-        </pre>
+        <>
+          <ContainerDetailsActions
+            id={id}
+            canStart={canStartContainer(perms, id)}
+            canStop={canStopContainer(perms, id)}
+            canRestart={canRestartContainer(perms, id)}
+            canDelete={canDeleteContainer(perms, id)}
+          />
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <Link
+              href={`/containers/${id}/logs`}
+              className={`rounded-lg border border-border bg-card p-4 text-sm transition ${canViewLogs(perms, id) ? "hover:bg-accent" : "opacity-50 pointer-events-none"}`}
+            >
+              <div className="font-semibold text-foreground">Logs</div>
+              <div className="text-muted-foreground mt-1">Live output and error traces</div>
+            </Link>
+            <Link
+              href={`/containers/${id}/console`}
+              className={`rounded-lg border border-border bg-card p-4 text-sm transition ${canExecContainer(perms, id) ? "hover:bg-accent" : "opacity-50 pointer-events-none"}`}
+            >
+              <div className="font-semibold text-foreground">Console</div>
+              <div className="text-muted-foreground mt-1">Interactive shell inside container</div>
+            </Link>
+            <div className="rounded-lg border border-border bg-card p-4 text-sm">
+              <div className="font-semibold text-foreground">Inspect JSON</div>
+              <div className="text-muted-foreground mt-1">Low-level metadata below</div>
+            </div>
+          </div>
+
+          <pre className="overflow-auto rounded-xl border border-border bg-card p-4 text-xs text-foreground whitespace-pre-wrap break-all">
+            {JSON.stringify(inspect, null, 2)}
+          </pre>
+        </>
       )}
     </div>
   );

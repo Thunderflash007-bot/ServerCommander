@@ -7,6 +7,7 @@ import { io, type Socket } from "socket.io-client";
 interface TerminalManagerProps {
   maxSessions: number;
   readOnly: boolean;
+  containerId?: string;
 }
 
 interface TerminalSession {
@@ -14,14 +15,30 @@ interface TerminalSession {
   label: string;
 }
 
-export function TerminalManager({ maxSessions, readOnly }: TerminalManagerProps) {
+function makeSessionId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes)
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function TerminalManager({ maxSessions, readOnly, containerId }: TerminalManagerProps) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const addSession = useCallback(() => {
     const max = maxSessions === 0 ? Infinity : maxSessions;
     if (sessions.length >= max) return;
-    const id = crypto.randomUUID();
+    const id = makeSessionId();
     const label = `Shell ${sessions.length + 1}`;
     setSessions((prev) => [...prev, { id, label }]);
     setActiveId(id);
@@ -96,7 +113,7 @@ export function TerminalManager({ maxSessions, readOnly }: TerminalManagerProps)
             key={s.id}
             className={`absolute inset-0 ${activeId === s.id ? "block" : "hidden"}`}
           >
-            <TerminalPane sessionId={s.id} readOnly={readOnly} />
+            <TerminalPane sessionId={s.id} readOnly={readOnly} containerId={containerId} />
           </div>
         ))}
         {sessions.length === 0 && (
@@ -111,7 +128,15 @@ export function TerminalManager({ maxSessions, readOnly }: TerminalManagerProps)
 
 // ── Single Terminal Pane ───────────────────────────────────────────────────────
 
-function TerminalPane({ sessionId, readOnly }: { sessionId: string; readOnly: boolean }) {
+function TerminalPane({
+  sessionId,
+  readOnly,
+  containerId,
+}: {
+  sessionId: string;
+  readOnly: boolean;
+  containerId?: string;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
@@ -153,7 +178,12 @@ function TerminalPane({ sessionId, readOnly }: { sessionId: string; readOnly: bo
         // Connect to WebSocket terminal server
         const socket: Socket = io("/terminal", {
           path: "/api/socket",
-          query: { sessionId, readOnly: String(readOnly) },
+          query: {
+            sessionId,
+            readOnly: String(readOnly),
+            mode: containerId ? "container" : "host",
+            containerId: containerId ?? "",
+          },
           withCredentials: true,
           transports: ["websocket", "polling"],
         });
@@ -195,7 +225,7 @@ function TerminalPane({ sessionId, readOnly }: { sessionId: string; readOnly: bo
       mounted = false;
       dispose?.();
     };
-  }, [sessionId, readOnly]);
+  }, [sessionId, readOnly, containerId]);
 
   return (
     <div className="w-full h-full p-1">

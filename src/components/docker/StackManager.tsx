@@ -29,28 +29,39 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  async function parseApiResponse(res: Response) {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return { error: text.slice(0, 200) || "Invalid server response" };
+    }
+  }
+
   async function loadStacks() {
     const res = await fetch("/api/docker/stacks");
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     if (!res.ok) {
-      setError(data.error ?? "Failed to load stacks");
+      setError(String(data.error ?? "Failed to load stacks"));
       return;
     }
-    setStacks(data.stacks ?? []);
-    if (!selected && data.stacks?.length) {
-      void selectStack(data.stacks[0].name);
+    const nextStacks = (data.stacks as StackSummary[] | undefined) ?? [];
+    setStacks(nextStacks);
+    if (!selected && nextStacks.length) {
+      void selectStack(nextStacks[0].name);
     }
   }
 
   async function selectStack(name: string) {
     setSelected(name);
     const res = await fetch(`/api/docker/stacks/${name}`);
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     if (!res.ok) {
-      setError(data.error ?? "Failed to load stack file");
+      setError(String(data.error ?? "Failed to load stack file"));
       return;
     }
-    setComposeContent(data.content ?? "");
+    setComposeContent(String(data.content ?? ""));
   }
 
   useEffect(() => {
@@ -65,14 +76,14 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: newName.trim(), content: starterCompose, deploy: false }),
     });
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     if (!res.ok) {
-      setError(data.error ?? "Failed to create stack");
+      setError(String(data.error ?? "Failed to create stack"));
       return;
     }
     setNewName("");
     await loadStacks();
-    await selectStack(data.name);
+    await selectStack(String(data.name ?? ""));
   }
 
   async function runAction(action: string) {
@@ -83,9 +94,9 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, content: composeContent }),
     });
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     if (!res.ok) {
-      setError(data.error ?? `${action} failed`);
+      setError(String(data.error ?? `${action} failed`));
       return;
     }
     startTransition(() => router.refresh());

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Square, RotateCcw, Trash2, FileText, Eye } from "lucide-react";
+import { Play, Square, RotateCcw, Trash2, FileText, Eye, TerminalSquare } from "lucide-react";
 import type { ContainerSummary } from "@/lib/docker";
 import type { FullPermissions } from "@/lib/rbac";
 import {
@@ -12,6 +12,7 @@ import {
   canDeleteContainer,
   canViewLogs,
   canInspectContainer,
+  canExecContainer,
 } from "@/lib/rbac";
 
 interface ContainerTableProps {
@@ -155,6 +156,16 @@ export function ContainerTable({ containers, permissions, compact }: ContainerTa
                           variant="default"
                         >
                           <Eye className="w-3.5 h-3.5" />
+                        </ActionButton>
+                      )}
+                      {canExecContainer(permissions, c.id) && (
+                        <ActionButton
+                          onClick={() => router.push(`/containers/${c.id}/console`)}
+                          disabled={!!busy}
+                          title="Console"
+                          variant="default"
+                        >
+                          <TerminalSquare className="w-3.5 h-3.5" />
                         </ActionButton>
                       )}
                       {canDeleteContainer(permissions, c.id) && (
