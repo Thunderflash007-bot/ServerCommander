@@ -3,19 +3,60 @@ import { parse } from "url";
 import next from "next";
 import { Server as SocketIOServer } from "socket.io";
 import pty from "node-pty";
-import { verifyToken } from "./src/lib/auth.js";
-import { getUserPermissions } from "./src/lib/auth.js";
-import { canAccessTerminal, isTerminalReadOnly, getTerminalMaxSessions } from "./src/lib/rbac.js";
+import { jwtVerify } from "jose";
+import { PrismaClient } from "@prisma/client";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
 const port = parseInt(process.env.PORT ?? "3000", 10);
+const prisma = new PrismaClient();
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 // Track active terminal sessions per user
 const userSessionCount = new Map();
+
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("JWT_SECRET must be at least 32 characters");
+  }
+  return new TextEncoder().encode(secret);
+}
+
+function readCookie(name, cookieHeader = "") {
+  const parts = cookieHeader.split(";").map((p) => p.trim());
+  for (const part of parts) {
+    if (part.startsWith(name + "=")) {
+      return decodeURIComponent(part.slice(name.length + 1));
+    }
+  }
+  return null;
+}
+
+async function verifySessionToken(token) {
+  const { payload } = await jwtVerify(token, getJwtSecret());
+  const sessionId = String(payload.sessionId ?? "");
+  const userId = String(payload.userId ?? "");
+  const username = String(payload.username ?? "");
+
+  if (!sessionId || !userId) {
+    throw new Error("Invalid session payload");
+  }
+
+  const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  if (!session || session.expiresAt < new Date()) {
+    throw new Error("Session expired or revoked");
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || !user.isActive) {
+    throw new Error("User disabled or missing");
+  }
+
+  return { sessionId, userId, username };
+}
 
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
@@ -31,24 +72,30 @@ app.prepare().then(() => {
   const terminalNs = io.of("/terminal");
 
   terminalNs.use(async (socket, next) => {
-    const token = socket.handshake.auth?.token ?? socket.request.headers?.cookie
-      ?.split(";")
-      .find((c) => c.trim().startsWith("sc_session="))
-      ?.split("=")[1];
+    const token =
+      socket.handshake.auth?.token ??
+      readCookie("sc_session", socket.request.headers?.cookie ?? "");
 
     if (!token) return next(new Error("Unauthorized"));
 
-    const payload = await verifyToken(token);
-    if (!payload) return next(new Error("Invalid session"));
+    try {
+      const session = await verifySessionToken(token);
+      const perms = await prisma.userPermission.findUnique({
+        where: { userId: session.userId },
+      });
 
-    const perms = await getUserPermissions(payload.userId);
-    if (!canAccessTerminal(perms)) return next(new Error("Terminal access denied"));
+      if (!perms || !perms.terminalAccess) {
+        return next(new Error("Terminal access denied"));
+      }
 
-    socket.data.userId = payload.userId;
-    socket.data.username = payload.username;
-    socket.data.readOnly = isTerminalReadOnly(perms);
-    socket.data.maxSessions = getTerminalMaxSessions(perms);
-    next();
+      socket.data.userId = session.userId;
+      socket.data.username = session.username;
+      socket.data.readOnly = perms.terminalReadOnly;
+      socket.data.maxSessions = perms.terminalMaxSessions;
+      next();
+    } catch {
+      return next(new Error("Invalid session"));
+    }
   });
 
   terminalNs.on("connection", (socket) => {
@@ -107,4 +154,12 @@ app.prepare().then(() => {
   httpServer.listen(port, hostname, () => {
     console.log(`[ServerCommander OS] Ready on http://${hostname}:${port}`);
   });
+
+  const shutdown = async () => {
+    await prisma.$disconnect().catch(() => null);
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 });
