@@ -15,10 +15,14 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { UserPermission } from "@prisma/client";
-import type { User } from "@prisma/client";
+
+type SidebarUser = {
+  username: string;
+  role: string;
+};
 
 interface SidebarProps {
-  user: User;
+  user: SidebarUser;
   permissions: UserPermission | null;
 }
 

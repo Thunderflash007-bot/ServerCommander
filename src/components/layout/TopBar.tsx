@@ -2,10 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { LogOut, User } from "lucide-react";
-import type { User as PrismaUser } from "@prisma/client";
+
+type TopBarUser = {
+  username: string;
+  displayName: string | null;
+};
 
 interface TopBarProps {
-  user: PrismaUser;
+  user: TopBarUser;
 }
 
 export function TopBar({ user }: TopBarProps) {
