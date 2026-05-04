@@ -1,10 +1,14 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { db } from "./db";
-import type { User } from "@prisma/client";
 
 const SESSION_COOKIE = "sc_session";
 const SESSION_MAX_AGE = parseInt(process.env.SESSION_MAX_AGE ?? "28800", 10);
+
+function isCookieSecure(): boolean {
+  const raw = (process.env.COOKIE_SECURE ?? "false").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -20,6 +24,17 @@ export interface SessionPayload {
   role: string;
   sessionId: string;
 }
+
+type CurrentUser = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  role: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  permissions: Awaited<ReturnType<typeof getUserPermissions>>;
+};
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -93,7 +108,7 @@ export function setSessionCookie(token: string) {
     name: SESSION_COOKIE,
     value: token,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isCookieSecure(),
     sameSite: "lax" as const,
     maxAge: SESSION_MAX_AGE,
     path: "/",
@@ -105,7 +120,7 @@ export function clearSessionCookie() {
     name: SESSION_COOKIE,
     value: "",
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isCookieSecure(),
     sameSite: "lax" as const,
     maxAge: 0,
     path: "/",
@@ -115,7 +130,7 @@ export function clearSessionCookie() {
 // ── Current user helpers ──────────────────────────────────────────────────────
 
 export async function getCurrentUser(): Promise<
-  (User & { permissions: Awaited<ReturnType<typeof getUserPermissions>> }) | null
+  CurrentUser | null
 > {
   const session = await getSession();
   if (!session) return null;

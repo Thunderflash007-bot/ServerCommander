@@ -144,6 +144,7 @@ DOCKER_SOCKET=/var/run/docker.sock
 HOST_FS_MOUNT=/host_system
 
 SESSION_MAX_AGE=28800
+COOKIE_SECURE=false
 EOF
 
 chmod 600 "$ENV_FILE"
