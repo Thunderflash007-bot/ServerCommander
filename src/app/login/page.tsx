@@ -19,19 +19,29 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ username, password }),
       });
 
+      let payload: { error?: string } | null = null;
+      const contentType = res.headers.get("content-type") ?? "";
+
+      if (contentType.includes("application/json")) {
+        payload = (await res.json()) as { error?: string };
+      } else {
+        const text = await res.text();
+        payload = { error: text.slice(0, 200) || "Unexpected server response" };
+      }
+
       if (!res.ok) {
-        const data = await res.json();
-        setError(data.error ?? "Login failed");
+        setError(payload?.error ?? "Login failed");
         return;
       }
 
       router.push("/dashboard");
       router.refresh();
-    } catch {
-      setError("Network error. Please try again.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Network error. Please try again.");
     } finally {
       setLoading(false);
     }
