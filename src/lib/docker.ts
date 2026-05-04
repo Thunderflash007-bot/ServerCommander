@@ -79,7 +79,7 @@ export async function getContainerLogs(
   opts: { tail?: number; timestamps?: boolean } = {}
 ): Promise<string> {
   const container = docker.getContainer(id);
-  const stream = await container.logs({
+  const rawLogs: unknown = await container.logs({
     stdout: true,
     stderr: true,
     tail: opts.tail ?? 200,
@@ -87,10 +87,15 @@ export async function getContainerLogs(
   });
 
   // Dockerode returns a Buffer for non-TTY containers
-  if (Buffer.isBuffer(stream)) {
-    return demuxDockerStream(stream);
+  if (Buffer.isBuffer(rawLogs)) {
+    return demuxDockerStream(rawLogs);
   }
-  return stream.toString("utf-8");
+
+  if (typeof rawLogs === "string") {
+    return rawLogs;
+  }
+
+  return String(rawLogs ?? "");
 }
 
 export async function listImages() {
