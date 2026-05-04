@@ -75,6 +75,21 @@ Then run setup again:
 4. Run `docker compose up -d`
 5. Wait for the health check and print the URL
 
+### Full reset to fresh clone state
+
+If you want to wipe all local runtime data and start clean:
+
+```bash
+./reset.sh
+```
+
+`reset.sh` removes for this project:
+1. Compose containers/networks
+2. Compose volumes (including SQLite data)
+3. Locally built images
+4. `.env` and backup env files
+5. Build/cache artifacts (`node_modules`, `.next`, `dist`, logs, local db files)
+
 ---
 
 ## 🔐 RBAC — Permission Model
