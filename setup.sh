@@ -128,7 +128,8 @@ cat > "$ENV_FILE" <<EOF
 
 NODE_ENV=production
 NEXT_PUBLIC_APP_NAME="ServerCommander OS"
-PORT=${APP_PORT}
+PORT=3000
+HOST_PORT=${APP_PORT}
 
 SESSION_SECRET=${SESSION_SECRET}
 JWT_SECRET=${JWT_SECRET}
@@ -147,12 +148,6 @@ EOF
 
 chmod 600 "$ENV_FILE"
 success ".env written with restricted permissions (600)"
-
-# ── Update docker-compose port if needed ─────────────────────────────────────
-if [[ "$APP_PORT" != "3000" ]]; then
-  sed -i "s|\"3000:3000\"|\"${APP_PORT}:3000\"|g" docker-compose.yml
-  info "Updated docker-compose.yml port to $APP_PORT:3000"
-fi
 
 # ── Build & Launch ────────────────────────────────────────────────────────────
 header "Building Docker image (this may take a few minutes on first run)"
