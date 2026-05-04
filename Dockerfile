@@ -2,17 +2,17 @@
 # Stage 1: Dependencies
 # ─────────────────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS deps
-RUN apk add --no-cache libc6-compat python3 make g++
+RUN apk add --no-cache libc6-compat openssl python3 make g++
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: Builder
 # ─────────────────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -30,6 +30,7 @@ RUN npm run build
 FROM node:20-alpine AS runner
 RUN apk add --no-cache \
     libc6-compat \
+    openssl \
     bash \
     curl \
     python3 \
