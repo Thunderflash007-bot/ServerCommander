@@ -38,6 +38,36 @@ cd servercommander-os
 bash setup.sh
 ```
 
+### Troubleshooting: docker-compose not installed
+
+If setup fails with:
+
+```text
+[ERROR] 'docker-compose' is not installed. Please install it and re-run setup.
+```
+
+Install Docker Compose (recommended: Compose Plugin):
+
+```bash
+apt-get update
+apt-get install -y docker-compose-plugin
+docker compose version
+```
+
+Legacy alternative (older systems):
+
+```bash
+apt-get update
+apt-get install -y docker-compose
+docker-compose --version
+```
+
+Then run setup again:
+
+```bash
+./setup.sh
+```
+
 `setup.sh` will:
 1. Prompt for an **admin username and password**
 2. Generate a cryptographically secure `.env` (unique secrets per install)

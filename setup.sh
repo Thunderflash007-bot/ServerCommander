@@ -39,7 +39,18 @@ require_cmd() {
 }
 
 require_cmd docker
-require_cmd docker-compose || require_cmd "docker compose"
+
+if docker compose version &>/dev/null; then
+  COMPOSE_CMD=(docker compose)
+  COMPOSE_LABEL="docker compose"
+  success "Docker Compose plugin found (docker compose)"
+elif command -v docker-compose &>/dev/null; then
+  COMPOSE_CMD=(docker-compose)
+  COMPOSE_LABEL="docker-compose"
+  success "docker-compose found ($(command -v docker-compose))"
+else
+  fatal "Neither 'docker compose' plugin nor 'docker-compose' is installed. Please install Docker Compose and re-run setup."
+fi
 
 # Check Docker daemon is running
 if ! docker info &>/dev/null; then
@@ -146,13 +157,13 @@ fi
 # ── Build & Launch ────────────────────────────────────────────────────────────
 header "Building Docker image (this may take a few minutes on first run)"
 
-docker compose build --no-cache
+"${COMPOSE_CMD[@]}" build --no-cache
 
 success "Docker image built."
 
 header "Starting ServerCommander OS"
 
-docker compose up -d
+"${COMPOSE_CMD[@]}" up -d
 
 # ── Wait for health ───────────────────────────────────────────────────────────
 header "Waiting for application to become healthy"
@@ -162,7 +173,7 @@ WAITED=0
 until curl -sf "http://localhost:${APP_PORT}/api/auth/me" > /dev/null 2>&1; do
   WAITED=$((WAITED + 3))
   if (( WAITED >= MAX_WAIT )); then
-    warn "Health check timed out after ${MAX_WAIT}s. Check logs: docker compose logs -f"
+    warn "Health check timed out after ${MAX_WAIT}s. Check logs: ${COMPOSE_LABEL} logs -f"
     break
   fi
   echo -n "."
@@ -179,7 +190,7 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo -e "  ${BOLD}URL:${RESET}      http://$(hostname -I | awk '{print $1}'):${APP_PORT}"
 echo -e "  ${BOLD}Username:${RESET} ${ADMIN_USERNAME}"
 echo -e "  ${BOLD}Password:${RESET} (as entered)\n"
-echo -e "  Manage: ${CYAN}docker compose logs -f${RESET}    — view logs"
-echo -e "          ${CYAN}docker compose down${RESET}        — stop"
-echo -e "          ${CYAN}docker compose restart${RESET}     — restart\n"
+echo -e "  Manage: ${CYAN}${COMPOSE_LABEL} logs -f${RESET}    — view logs"
+echo -e "          ${CYAN}${COMPOSE_LABEL} down${RESET}        — stop"
+echo -e "          ${CYAN}${COMPOSE_LABEL} restart${RESET}     — restart\n"
 warn "Keep the .env file secure and never share your secrets."
