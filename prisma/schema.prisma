@@ -1,0 +1,171 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ServerCommander OS — Prisma Schema
+// Deep RBAC: per-container, per-path, per-feature permissions
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ── Users & Sessions ──────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  displayName  String?
+  role         Role      @default(USER)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions    Session[]
+  permissions UserPermission?
+  auditLogs   AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+// ── Master Permission Document (1-to-1 with User) ────────────────────────────
+
+model UserPermission {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // ── Docker: Global Permissions ──────────────────────────────────────────────
+  /// Can see the Docker section at all
+  dockerAccess   Boolean @default(false)
+  /// Can see ALL containers (overrides container whitelist)
+  dockerViewAll  Boolean @default(false)
+  /// Can pull/delete images
+  dockerImages   Boolean @default(false)
+  /// Can create/remove volumes
+  dockerVolumes  Boolean @default(false)
+  /// Can create/remove networks
+  dockerNetworks Boolean @default(false)
+  /// Can create brand-new containers
+  dockerCreate   Boolean @default(false)
+  /// Can remove any container (scoped by whitelist when dockerViewAll=false)
+  dockerDelete   Boolean @default(false)
+
+  // ── Filesystem Access ────────────────────────────────────────────────────────
+  /// Can access the Files section at all
+  fsAccess Boolean @default(false)
+
+  // ── Terminal Access ──────────────────────────────────────────────────────────
+  /// Can open a terminal session
+  terminalAccess   Boolean @default(false)
+  /// If true, only read-only commands are allowed (enforced at shell level)
+  terminalReadOnly Boolean @default(true)
+  /// Maximum concurrent terminal sessions (0 = unlimited)
+  terminalMaxSessions Int @default(1)
+
+  // ── Relations ────────────────────────────────────────────────────────────────
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  containerPerms  ContainerPermission[]
+  fsPathPerms     FsPathPermission[]
+}
+
+// ── Per-Container Permission (whitelist entry) ────────────────────────────────
+
+model ContainerPermission {
+  id           String @id @default(cuid())
+  permissionId String
+
+  /// Docker container ID (full 64-char or short 12-char) — used as authoritative key
+  containerId   String
+  /// Human-readable label stored at grant time (may drift if container is renamed)
+  containerName String
+
+  /// Can see this container in the list
+  canView    Boolean @default(true)
+  /// Can start the container
+  canStart   Boolean @default(false)
+  /// Can stop the container
+  canStop    Boolean @default(false)
+  /// Can restart the container
+  canRestart Boolean @default(false)
+  /// Can remove/delete the container
+  canDelete  Boolean @default(false)
+  /// Can stream container logs
+  canLogs    Boolean @default(false)
+  /// Can exec into the container (opens a shell inside it)
+  canExec    Boolean @default(false)
+  /// Can call inspect / read detailed metadata
+  canInspect Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  permission UserPermission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([permissionId, containerId])
+  @@index([permissionId])
+  @@index([containerId])
+}
+
+// ── Per-Path Filesystem Permission ───────────────────────────────────────────
+
+model FsPathPermission {
+  id           String @id @default(cuid())
+  permissionId String
+
+  /// Absolute path on the HOST system (relative to HOST_FS_MOUNT inside container)
+  path     String
+  /// false = read-write, true = read-only
+  readOnly Boolean @default(true)
+  /// Allow creating new files/directories
+  canCreate Boolean @default(false)
+  /// Allow deleting files/directories
+  canDelete Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  permission UserPermission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([permissionId, path])
+  @@index([permissionId])
+}
+
+// ── Audit Log ─────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  username  String
+  action    String
+  resource  String
+  detail    String?
+  ipAddress String?
+  success   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([resource])
+}

@@ -1,0 +1,65 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ServerCommander OS — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: servercommander-os:latest
+    container_name: servercommander
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    env_file:
+      - .env
+
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/data/servercommander.db
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - HOST_FS_MOUNT=/host_system
+
+    volumes:
+      # Persist SQLite database
+      - sc_data:/app/data
+
+      # Docker socket — allows managing host containers
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # Host filesystem — mounted read-write; RBAC enforces per-path access
+      - /:/host_system:rslave
+
+    # Needs access to docker.sock (group docker = gid 999 typically)
+    group_add:
+      - "999"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/auth/me"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    security_opt:
+      - no-new-privileges:true
+
+    labels:
+      - "com.servercommander.managed=true"
+
+volumes:
+  sc_data:
+    driver: local
+    labels:
+      - "com.servercommander.volume=data"
