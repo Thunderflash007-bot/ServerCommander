@@ -123,7 +123,6 @@ function TerminalPane({ sessionId, readOnly }: { sessionId: string; readOnly: bo
       const { Terminal } = await import("@xterm/xterm");
       const { FitAddon } = await import("@xterm/addon-fit");
       const { WebLinksAddon } = await import("@xterm/addon-web-links");
-      await import("@xterm/xterm/css/xterm.css");
 
       if (!mounted || !containerRef.current) return;
 
