@@ -12,7 +12,7 @@ RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install 
 # Stage 2: Builder
 # ─────────────────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
-RUN apk add --no-cache libc6-compat openssl
+RUN apk add --no-cache libc6-compat openssl python3 make g++
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -21,6 +21,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL="file:/tmp/build.db"
 
+RUN npm rebuild node-pty --build-from-source
 RUN npx prisma generate
 RUN npm run build
 
