@@ -12,6 +12,7 @@ export async function GET() {
       username: user.username,
       displayName: user.displayName,
       role: user.role,
+      mustChangePassword: user.mustChangePassword,
     },
     permissions: user.permissions,
   });

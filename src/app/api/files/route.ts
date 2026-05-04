@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { canAccessFilesystem, canReadPath, canWritePath, canCreateInPath, canDeleteInPath } from "@/lib/rbac";
 import type { FullPermissions } from "@/lib/rbac";
+import { isSshBackendEnabled, normalizeVirtualPath, resolveRemotePath, statRemotePath, withSftpClient } from "@/lib/remote-files";
 import fs from "fs/promises";
 import path from "path";
 
@@ -24,6 +25,18 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+function isNotFoundError(err: unknown): boolean {
+  const e = err as NodeJS.ErrnoException;
+  const msg = String((err as Error)?.message ?? "").toLowerCase();
+  return e?.code === "ENOENT" || msg.includes("no such file") || msg.includes("not found");
+}
+
+function toBuffer(value: unknown): Buffer {
+  if (Buffer.isBuffer(value)) return value;
+  if (typeof value === "string") return Buffer.from(value, "utf-8");
+  throw new Error("Unsupported file payload format from backend");
+}
+
 // ── GET /api/files?path=/some/dir ─────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -41,13 +54,76 @@ export async function GET(req: NextRequest) {
   const mode = searchParams.get("mode") ?? "list";
 
   // Virtual path (relative to host root) used for RBAC checks
-  const virtualPath = requestedPath.startsWith("/") ? requestedPath : "/" + requestedPath;
+  const virtualPath = normalizeVirtualPath(requestedPath);
 
   if (!canReadPath(perms, virtualPath)) {
     return NextResponse.json({ error: "Permission denied for this path" }, { status: 403 });
   }
 
   try {
+    if (isSshBackendEnabled()) {
+      return await withSftpClient(async (sftp) => {
+        const remotePath = resolveRemotePath(virtualPath);
+        const stat = await statRemotePath(sftp, remotePath);
+
+        if (mode === "download") {
+          if (!stat.isDirectory) {
+            const remoteData = await sftp.get(remotePath);
+            const file = toBuffer(remoteData);
+            return new NextResponse(new Uint8Array(file), {
+              status: 200,
+              headers: {
+                "Content-Type": "application/octet-stream",
+                "Content-Disposition": `attachment; filename="${encodeURIComponent(path.basename(remotePath))}"`,
+              },
+            });
+          }
+          return jsonError("Only files can be downloaded", 400);
+        }
+
+        if (mode === "content") {
+          if (stat.isDirectory) {
+            return jsonError("Only files have editable content", 400);
+          }
+          const remoteData = await sftp.get(remotePath);
+          const content = toBuffer(remoteData).toString("utf-8");
+          return NextResponse.json({
+            path: virtualPath,
+            content,
+            size: stat.size,
+            modified: stat.modified.toISOString(),
+          });
+        }
+
+        if (stat.isDirectory) {
+          const entries = await sftp.list(remotePath);
+          return NextResponse.json({
+            path: virtualPath,
+            type: "directory",
+            entries: entries.map((entry: { name: string; type: string; size: number; modifyTime: number }) => {
+              const childVirtualPath = normalizeVirtualPath(path.posix.join(virtualPath, entry.name));
+              return {
+                name: entry.name,
+                path: childVirtualPath,
+                type: entry.type === "d" ? "directory" : "file",
+                size: entry.size,
+                modified: new Date(entry.modifyTime || Date.now()).toISOString(),
+                canRead: canReadPath(perms, childVirtualPath),
+                canWrite: canWritePath(perms, childVirtualPath),
+              };
+            }),
+          });
+        }
+
+        return NextResponse.json({
+          path: virtualPath,
+          type: "file",
+          size: stat.size,
+          modified: stat.modified.toISOString(),
+        });
+      });
+    }
+
     const realPath = resolveSafePath(virtualPath);
     const stat = await fs.stat(realPath);
 
@@ -110,7 +186,7 @@ export async function GET(req: NextRequest) {
       });
     }
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isNotFoundError(err)) {
       return NextResponse.json({ error: "Path not found" }, { status: 404 });
     }
     if (err instanceof Error && err.message === "Path traversal detected") {
@@ -142,14 +218,25 @@ export async function POST(req: NextRequest) {
       return jsonError("file is required", 400);
     }
 
-    const virtualDir = targetDir.startsWith("/") ? targetDir : `/${targetDir}`;
+    const virtualDir = normalizeVirtualPath(targetDir);
     if (!canCreateInPath(perms, virtualDir)) {
       return jsonError("Create permission denied", 403);
     }
 
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    if (isSshBackendEnabled()) {
+      await withSftpClient(async (sftp) => {
+        const remoteDir = resolveRemotePath(virtualDir);
+        await sftp.mkdir(remoteDir, true);
+        const remotePath = path.posix.join(remoteDir, file.name);
+        await sftp.put(buffer, remotePath);
+      });
+      return NextResponse.json({ success: true, path: normalizeVirtualPath(path.posix.join(virtualDir, file.name)) });
+    }
+
     const realDir = resolveSafePath(virtualDir);
     const realPath = path.join(realDir, file.name);
-    const buffer = Buffer.from(await file.arrayBuffer());
     await fs.writeFile(realPath, buffer);
     return NextResponse.json({ success: true, path: toVirtualPath(realPath) });
   }
@@ -157,21 +244,31 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const action = String(body.action ?? "");
   const requestedPath = String(body.path ?? "/");
-  const virtualPath = requestedPath.startsWith("/") ? requestedPath : `/${requestedPath}`;
+  const virtualPath = normalizeVirtualPath(requestedPath);
 
   if (!canCreateInPath(perms, virtualPath)) {
     return jsonError("Create permission denied", 403);
   }
 
-  const realPath = resolveSafePath(virtualPath);
-
   if (action === "mkdir") {
-    await fs.mkdir(realPath, { recursive: true });
+    if (isSshBackendEnabled()) {
+      await withSftpClient(async (sftp) => {
+        await sftp.mkdir(resolveRemotePath(virtualPath), true);
+      });
+    } else {
+      await fs.mkdir(resolveSafePath(virtualPath), { recursive: true });
+    }
     return NextResponse.json({ success: true, path: virtualPath });
   }
 
   if (action === "create-file") {
-    await fs.writeFile(realPath, String(body.content ?? ""), "utf-8");
+    if (isSshBackendEnabled()) {
+      await withSftpClient(async (sftp) => {
+        await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), resolveRemotePath(virtualPath));
+      });
+    } else {
+      await fs.writeFile(resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
+    }
     return NextResponse.json({ success: true, path: virtualPath });
   }
 
@@ -195,8 +292,7 @@ export async function PATCH(req: NextRequest) {
 
   if (!requestedPath) return jsonError("path required", 400);
 
-  const virtualPath = requestedPath.startsWith("/") ? requestedPath : `/${requestedPath}`;
-  const realPath = resolveSafePath(virtualPath);
+  const virtualPath = normalizeVirtualPath(requestedPath);
 
   if (action === "rename") {
     const nextName = String(body.name ?? "").trim();
@@ -207,7 +303,13 @@ export async function PATCH(req: NextRequest) {
       return jsonError("Rename permission denied", 403);
     }
 
-    await fs.rename(realPath, resolveSafePath(targetVirtualPath));
+    if (isSshBackendEnabled()) {
+      await withSftpClient(async (sftp) => {
+        await sftp.rename(resolveRemotePath(virtualPath), resolveRemotePath(targetVirtualPath));
+      });
+    } else {
+      await fs.rename(resolveSafePath(virtualPath), resolveSafePath(targetVirtualPath));
+    }
     return NextResponse.json({ success: true, path: targetVirtualPath });
   }
 
@@ -215,7 +317,13 @@ export async function PATCH(req: NextRequest) {
     if (!canWritePath(perms, virtualPath)) {
       return jsonError("Write permission denied", 403);
     }
-    await fs.writeFile(realPath, String(body.content ?? ""), "utf-8");
+    if (isSshBackendEnabled()) {
+      await withSftpClient(async (sftp) => {
+        await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), resolveRemotePath(virtualPath));
+      });
+    } else {
+      await fs.writeFile(resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
+    }
     return NextResponse.json({ success: true, path: virtualPath });
   }
 
@@ -237,19 +345,31 @@ export async function DELETE(req: NextRequest) {
   const requestedPath = searchParams.get("path") ?? "";
   if (!requestedPath) return NextResponse.json({ error: "path required" }, { status: 400 });
 
-  const virtualPath = requestedPath.startsWith("/") ? requestedPath : "/" + requestedPath;
+  const virtualPath = normalizeVirtualPath(requestedPath);
 
   if (!canDeleteInPath(perms, virtualPath)) {
     return NextResponse.json({ error: "Delete permission denied" }, { status: 403 });
   }
 
   try {
-    const realPath = resolveSafePath(virtualPath);
-    const stat = await fs.stat(realPath);
-    if (stat.isDirectory()) {
-      await fs.rm(realPath, { recursive: true });
+    if (isSshBackendEnabled()) {
+      await withSftpClient(async (sftp) => {
+        const remotePath = resolveRemotePath(virtualPath);
+        const stat = await statRemotePath(sftp, remotePath);
+        if (stat.isDirectory) {
+          await sftp.rmdir(remotePath, true);
+        } else {
+          await sftp.delete(remotePath);
+        }
+      });
     } else {
-      await fs.unlink(realPath);
+      const realPath = resolveSafePath(virtualPath);
+      const stat = await fs.stat(realPath);
+      if (stat.isDirectory()) {
+        await fs.rm(realPath, { recursive: true });
+      } else {
+        await fs.unlink(realPath);
+      }
     }
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

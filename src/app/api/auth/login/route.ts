@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     const token = await createSession(user.id, user.username, user.role, {
       userAgent: req.headers.get("user-agent") ?? undefined,
       ipAddress: req.headers.get("x-forwarded-for") ?? req.ip,
-    });
+    }, user.mustChangePassword);
 
     await writeAuditLog(
       { userId: user.id, username: user.username, role: user.role, sessionId: "" },
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     );
 
     const response = NextResponse.json({
-      user: { id: user.id, username: user.username, role: user.role },
+      user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
     });
 
     const cookie = setSessionCookie(token);

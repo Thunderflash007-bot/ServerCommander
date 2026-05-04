@@ -23,6 +23,7 @@ export interface SessionPayload {
   username: string;
   role: string;
   sessionId: string;
+  mustChangePassword?: boolean;
 }
 
 type CurrentUser = {
@@ -31,6 +32,7 @@ type CurrentUser = {
   displayName: string | null;
   role: string;
   isActive: boolean;
+  mustChangePassword: boolean;
   createdAt: Date;
   updatedAt: Date;
   permissions: Awaited<ReturnType<typeof getUserPermissions>>;
@@ -61,7 +63,8 @@ export async function createSession(
   userId: string,
   username: string,
   role: string,
-  meta?: { userAgent?: string; ipAddress?: string }
+  meta?: { userAgent?: string; ipAddress?: string },
+  mustChangePassword?: boolean
 ): Promise<string> {
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
 
@@ -75,7 +78,13 @@ export async function createSession(
     },
   });
 
-  const jwt = await signToken({ userId, username, role, sessionId: session.id });
+  const jwt = await signToken({
+    userId,
+    username,
+    role,
+    sessionId: session.id,
+    mustChangePassword,
+  });
   return jwt;
 }
 

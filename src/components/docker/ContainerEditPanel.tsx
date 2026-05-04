@@ -1,6 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+type ForwardEntry = {
+  id: string;
+  hostPort: number;
+  containerPort: number;
+  status: string;
+};
 
 type Props = {
   id: string;
@@ -12,9 +19,25 @@ type Props = {
 export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: Props) {
   const [name, setName] = useState(currentName);
   const [policy, setPolicy] = useState(restartPolicy || "no");
+  const [hostPort, setHostPort] = useState("");
+  const [containerPort, setContainerPort] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [forwards, setForwards] = useState<ForwardEntry[]>([]);
+
+  async function loadForwards() {
+    const res = await fetch(`/api/docker/containers/${id}?type=port-forwards`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setForwards((data.forwards ?? []) as ForwardEntry[]);
+    }
+  }
+
+  useEffect(() => {
+    void loadForwards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   async function updateName() {
     setBusy(true);
@@ -50,6 +73,50 @@ export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: 
       return;
     }
     setOk("Restart policy updated");
+  }
+
+  async function addForward() {
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    const res = await fetch(`/api/docker/containers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "port-forward-add",
+        hostPort: Number(hostPort),
+        containerPort: Number(containerPort),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) {
+      setError(data.error ?? "Port forwarding add failed");
+      return;
+    }
+    setHostPort("");
+    setContainerPort("");
+    setOk("Port forwarding created");
+    await loadForwards();
+  }
+
+  async function removeForward(forwardId: string) {
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    const res = await fetch(`/api/docker/containers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "port-forward-remove", forwardId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) {
+      setError(data.error ?? "Port forwarding remove failed");
+      return;
+    }
+    setOk("Port forwarding removed");
+    await loadForwards();
   }
 
   return (
@@ -101,6 +168,59 @@ export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: 
               Save
             </button>
           </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border/70 p-3">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Port Forwarding (Portainer-style)</h3>
+          <p className="text-xs text-muted-foreground mt-1">Creates managed TCP forwards via sidecar helper containers.</p>
+        </div>
+
+        <div className="grid gap-2 md:grid-cols-3">
+          <input
+            value={hostPort}
+            onChange={(event) => setHostPort(event.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Host Port (e.g. 8080)"
+            disabled={!canEdit || busy}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <input
+            value={containerPort}
+            onChange={(event) => setContainerPort(event.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Container Port (e.g. 80)"
+            disabled={!canEdit || busy}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <button
+            onClick={() => void addForward()}
+            disabled={!canEdit || busy || !hostPort || !containerPort}
+            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+          >
+            Add Forward
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          {forwards.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No managed forwards configured.</p>
+          ) : (
+            forwards.map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+                <div>
+                  <span className="font-mono">{entry.hostPort} -&gt; {entry.containerPort}/tcp</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{entry.status}</span>
+                </div>
+                <button
+                  onClick={() => void removeForward(entry.id)}
+                  disabled={!canEdit || busy}
+                  className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive hover:bg-destructive/20 disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

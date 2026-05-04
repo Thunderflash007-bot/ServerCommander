@@ -1,8 +1,9 @@
 import { getCurrentUser } from "@/lib/auth";
-import { listContainers } from "@/lib/docker";
-import { canAccessDocker, filterVisibleContainerIds } from "@/lib/rbac";
+import { listContainers, listImages, listNetworks } from "@/lib/docker";
+import { canAccessDocker, canCreateContainers, filterVisibleContainerIds } from "@/lib/rbac";
 import type { FullPermissions } from "@/lib/rbac";
 import { ContainerTable } from "@/components/docker/ContainerTable";
+import { ContainerCreatePanel } from "@/components/docker/ContainerCreatePanel";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +16,22 @@ export default async function ContainersPage() {
   if (!canAccessDocker(perms)) redirect("/dashboard");
 
   let containers: Awaited<ReturnType<typeof listContainers>> = [];
+  let imageSuggestions: string[] = [];
+  let networkSuggestions: string[] = [];
   let error: string | null = null;
 
   try {
     const all = await listContainers();
     const visibleIds = filterVisibleContainerIds(perms, all.map((c) => c.id));
     containers = all.filter((c) => visibleIds.includes(c.id));
+
+    if (canCreateContainers(perms)) {
+      const [images, networks] = await Promise.all([listImages(), listNetworks()]);
+      imageSuggestions = images
+        .flatMap((img) => img.RepoTags ?? [])
+        .filter((tag) => !!tag && tag !== "<none>:<none>");
+      networkSuggestions = networks.map((n) => n.Name).filter(Boolean);
+    }
   } catch (e) {
     error = "Unable to connect to Docker daemon. Is the socket mounted?";
     console.error(e);
@@ -40,7 +51,16 @@ export default async function ContainersPage() {
           {error}
         </div>
       ) : (
-        <ContainerTable containers={containers} permissions={perms} />
+        <>
+          {canCreateContainers(perms) && (
+            <ContainerCreatePanel
+              images={imageSuggestions}
+              networks={networkSuggestions}
+              sources={containers.map((c) => ({ id: c.id, name: c.name, shortId: c.shortId }))}
+            />
+          )}
+          <ContainerTable containers={containers} permissions={perms} />
+        </>
       )}
     </div>
   );

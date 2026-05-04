@@ -23,11 +23,14 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password }),
       });
 
-      let payload: { error?: string } | null = null;
+      let payload: { error?: string; user?: { mustChangePassword: boolean } } | null = null;
       const contentType = res.headers.get("content-type") ?? "";
 
       if (contentType.includes("application/json")) {
-        payload = (await res.json()) as { error?: string };
+        payload = (await res.json()) as {
+          error?: string;
+          user?: { mustChangePassword: boolean };
+        };
       } else {
         const text = await res.text();
         payload = { error: text.slice(0, 200) || "Unexpected server response" };
@@ -36,6 +39,13 @@ export default function LoginPage() {
       if (!res.ok) {
         setError(payload?.error ?? "Login failed");
         return;
+      }
+
+      // Store mustChangePassword flag for dashboard
+      if (payload?.user?.mustChangePassword) {
+        localStorage.setItem("mustChangePassword", "true");
+      } else {
+        localStorage.removeItem("mustChangePassword");
       }
 
       router.push("/dashboard");

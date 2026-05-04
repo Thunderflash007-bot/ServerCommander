@@ -3,6 +3,7 @@ import { parse } from "url";
 import next from "next";
 import { Server as SocketIOServer } from "socket.io";
 import pty from "node-pty";
+import { Client as SSHClient } from "ssh2";
 import { jwtVerify } from "jose";
 import { PrismaClient } from "@prisma/client";
 
@@ -46,6 +47,23 @@ function readCookie(name, cookieHeader = "") {
     }
   }
   return null;
+}
+
+function isSshBackendEnabled() {
+  return String(process.env.SSH_ENABLED ?? "false").toLowerCase() === "true";
+}
+
+function getSshRuntimeConfig() {
+  const host = process.env.SSH_HOST?.trim();
+  const username = process.env.SSH_USERNAME?.trim();
+  const password = process.env.SSH_PASSWORD ?? "";
+  const port = Number(process.env.SSH_PORT ?? "22");
+
+  if (!host || !username || !password) {
+    throw new Error("SSH backend is enabled but SSH_HOST/SSH_USERNAME/SSH_PASSWORD are missing");
+  }
+
+  return { host, username, password, port };
 }
 
 async function verifySessionToken(token) {
@@ -146,13 +164,73 @@ app.prepare().then(() => {
     userSessionCount.set(userId, current + 1);
 
     const cwd = process.env.HOST_FS_MOUNT ?? "/host_system";
+    const useSshHostShell = mode === "host" && isSshBackendEnabled();
 
-    const ptyProcess =
-        mode === "container"
-          ? pty.spawn(
-              "docker",
-              ["exec", "-u", "0", "-it", containerId, "/bin/sh"],
+    let ptyProcess = null;
+    let sshConn = null;
+    let sshStream = null;
+
+    if (useSshHostShell) {
+      try {
+        const sshCfg = getSshRuntimeConfig();
+        sshConn = new SSHClient();
+        sshConn.on("ready", () => {
+          sshConn.shell(
             {
+              term: "xterm-256color",
+              cols: 80,
+              rows: 24,
+            },
+            (err, stream) => {
+              if (err) {
+                socket.emit("output", `\r\n\x1b[31mSSH shell failed: ${err.message}\x1b[0m\r\n`);
+                socket.disconnect();
+                return;
+              }
+              sshStream = stream;
+              stream.on("data", (data) => socket.emit("output", data.toString("utf-8")));
+              stream.on("close", () => {
+                socket.emit("output", "\r\n\x1b[33m[SSH session closed]\x1b[0m\r\n");
+                socket.disconnect();
+              });
+            }
+          );
+        });
+        sshConn.on("error", (err) => {
+          socket.emit("output", `\r\n\x1b[31mSSH error: ${err.message}\x1b[0m\r\n`);
+        });
+        sshConn.connect({
+          host: sshCfg.host,
+          port: sshCfg.port,
+          username: sshCfg.username,
+          password: sshCfg.password,
+          readyTimeout: 15000,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        socket.emit("output", `\r\n\x1b[31mSSH config error: ${message}\x1b[0m\r\n`);
+        socket.disconnect();
+        return;
+      }
+    } else {
+      ptyProcess =
+          mode === "container"
+            ? pty.spawn(
+                "docker",
+                ["exec", "-u", "0", "-it", containerId, "/bin/sh"],
+              {
+                name: "xterm-256color",
+                cols: 80,
+                rows: 24,
+                cwd,
+                env: {
+                  ...process.env,
+                  TERM: "xterm-256color",
+                  COLORTERM: "truecolor",
+                },
+              }
+            )
+          : pty.spawn(process.env.SHELL ?? "/bin/bash", [], {
               name: "xterm-256color",
               cols: 80,
               rows: 24,
@@ -162,39 +240,56 @@ app.prepare().then(() => {
                 TERM: "xterm-256color",
                 COLORTERM: "truecolor",
               },
-            }
-          )
-        : pty.spawn(process.env.SHELL ?? "/bin/bash", [], {
-            name: "xterm-256color",
-            cols: 80,
-            rows: 24,
-            cwd,
-            env: {
-              ...process.env,
-              TERM: "xterm-256color",
-              COLORTERM: "truecolor",
-            },
-          });
+            });
 
-    ptyProcess.onData((data) => socket.emit("output", data));
+      ptyProcess.onData((data) => socket.emit("output", data));
 
-    ptyProcess.onExit(() => {
-      socket.emit("output", "\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
-      socket.disconnect();
-    });
+      ptyProcess.onExit(() => {
+        socket.emit("output", "\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
+        socket.disconnect();
+      });
+    }
 
     socket.on("input", (data) => {
-      if (!readOnly) {
+      if (readOnly) return;
+      if (sshStream) {
+        sshStream.write(data);
+        return;
+      }
+      if (ptyProcess) {
         ptyProcess.write(data);
       }
     });
 
     socket.on("resize", ({ cols, rows }) => {
-      ptyProcess.resize(Math.max(1, cols), Math.max(1, rows));
+      const safeCols = Math.max(1, cols);
+      const safeRows = Math.max(1, rows);
+      if (sshStream?.setWindow) {
+        sshStream.setWindow(safeRows, safeCols, 0, 0);
+      }
+      if (ptyProcess) {
+        ptyProcess.resize(safeCols, safeRows);
+      }
     });
 
     socket.on("disconnect", () => {
-      ptyProcess.kill();
+      if (sshStream) {
+        try {
+          sshStream.end();
+        } catch {
+          // noop
+        }
+      }
+      if (sshConn) {
+        try {
+          sshConn.end();
+        } catch {
+          // noop
+        }
+      }
+      if (ptyProcess) {
+        ptyProcess.kill();
+      }
       const cnt = userSessionCount.get(userId) ?? 1;
       userSessionCount.set(userId, Math.max(0, cnt - 1));
     });

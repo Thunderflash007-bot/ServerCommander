@@ -9,6 +9,9 @@ import {
   getContainerLogs,
   renameContainer,
   updateContainerConfig,
+  listManagedPortForwards,
+  createManagedPortForward,
+  removeManagedPortForward,
 } from "@/lib/docker";
 import {
   canAccessDocker,
@@ -57,6 +60,12 @@ export async function GET(req: NextRequest, { params }: Params) {
         req
       );
       return NextResponse.json({ logs });
+    }
+
+    if (type === "port-forwards") {
+      if (!canInspectContainer(perms, id)) return deny();
+      const forwards = await listManagedPortForwards(id);
+      return NextResponse.json({ forwards });
     }
 
     if (!canInspectContainer(perms, id)) return deny();
@@ -186,6 +195,21 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         restartPolicyName: policy as "no" | "always" | "unless-stopped" | "on-failure",
         restartPolicyMaximumRetryCount: parseInt(String(body.maximumRetryCount ?? 0), 10) || 0,
       });
+    } else if (action === "port-forward-add") {
+      if (!canRestartContainer(perms, id) && !canDeleteContainer(perms, id)) return deny();
+      const hostPort = parseInt(String(body.hostPort ?? "0"), 10);
+      const containerPort = parseInt(String(body.containerPort ?? "0"), 10);
+      if (!hostPort || !containerPort) {
+        return NextResponse.json({ error: "hostPort and containerPort are required" }, { status: 400 });
+      }
+      await createManagedPortForward(id, { hostPort, containerPort });
+    } else if (action === "port-forward-remove") {
+      if (!canRestartContainer(perms, id) && !canDeleteContainer(perms, id)) return deny();
+      const forwardId = String(body.forwardId ?? "").trim();
+      if (!forwardId) {
+        return NextResponse.json({ error: "forwardId is required" }, { status: 400 });
+      }
+      await removeManagedPortForward(forwardId);
     } else {
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

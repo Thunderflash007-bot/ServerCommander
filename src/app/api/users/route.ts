@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
       passwordHash,
       displayName: displayName ?? null,
       role: "USER",
+      mustChangePassword: true,
       permissions: permissions
         ? {
             create: {
