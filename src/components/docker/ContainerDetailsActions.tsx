@@ -6,6 +6,7 @@ import { Play, Square, RotateCcw, Trash2 } from "lucide-react";
 
 type Props = {
   id: string;
+  isRunning: boolean;
   canStart: boolean;
   canStop: boolean;
   canRestart: boolean;
@@ -25,7 +26,7 @@ async function runAction(id: string, action: string) {
   }
 }
 
-export function ContainerDetailsActions({ id, canStart, canStop, canRestart, canDelete }: Props) {
+export function ContainerDetailsActions({ id, isRunning, canStart, canStop, canRestart, canDelete }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export function ContainerDetailsActions({ id, canStart, canStop, canRestart, can
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {canStart && (
+        {!isRunning && canStart && (
           <button
             onClick={() => void onAction("start")}
             disabled={isPending}
@@ -52,7 +53,7 @@ export function ContainerDetailsActions({ id, canStart, canStop, canRestart, can
             <span className="inline-flex items-center gap-1"><Play className="w-4 h-4" />Start</span>
           </button>
         )}
-        {canStop && (
+        {isRunning && canStop && (
           <button
             onClick={() => void onAction("stop")}
             disabled={isPending}

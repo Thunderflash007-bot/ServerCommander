@@ -7,6 +7,8 @@ import {
   restartContainer,
   removeContainer,
   getContainerLogs,
+  renameContainer,
+  updateContainerConfig,
 } from "@/lib/docker";
 import {
   canAccessDocker,
@@ -147,6 +149,56 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       true,
       req
     );
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+// ── PATCH /api/docker/containers/[id] — edit metadata/config ─────────────────
+
+export async function PATCH(req: NextRequest, { params }: Params) {
+  const { id } = await params;
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const perms = user.permissions as FullPermissions | null;
+  if (!canAccessDocker(perms) || !canViewContainer(perms, id)) return deny();
+
+  const body = await req.json();
+  const action = String(body.action ?? "");
+
+  try {
+    if (action === "rename") {
+      if (!canRestartContainer(perms, id) && !canDeleteContainer(perms, id)) return deny();
+      const name = String(body.name ?? "").trim();
+      if (!name.match(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,127}$/)) {
+        return NextResponse.json({ error: "Invalid container name" }, { status: 400 });
+      }
+      await renameContainer(id, name);
+    } else if (action === "restart-policy") {
+      if (!canRestartContainer(perms, id)) return deny();
+      const policy = String(body.policy ?? "");
+      if (!["no", "always", "unless-stopped", "on-failure"].includes(policy)) {
+        return NextResponse.json({ error: "Invalid restart policy" }, { status: 400 });
+      }
+      await updateContainerConfig(id, {
+        restartPolicyName: policy as "no" | "always" | "unless-stopped" | "on-failure",
+        restartPolicyMaximumRetryCount: parseInt(String(body.maximumRetryCount ?? 0), 10) || 0,
+      });
+    } else {
+      return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    }
+
+    await writeAuditLog(
+      { userId: user.id, username: user.username, role: user.role, sessionId: "" },
+      "EDIT_CONTAINER",
+      `container:${id}`,
+      action,
+      true,
+      req
+    );
+
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

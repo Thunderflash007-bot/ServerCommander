@@ -74,6 +74,30 @@ export async function removeContainer(id: string, force = false) {
   await container.remove({ force });
 }
 
+export async function renameContainer(id: string, name: string) {
+  const container = docker.getContainer(id);
+  await container.rename({ name });
+}
+
+export async function updateContainerConfig(
+  id: string,
+  opts: {
+    restartPolicyName?: "no" | "always" | "unless-stopped" | "on-failure";
+    restartPolicyMaximumRetryCount?: number;
+  }
+) {
+  const container = docker.getContainer(id);
+  await container.update({
+    RestartPolicy:
+      opts.restartPolicyName
+        ? {
+            Name: opts.restartPolicyName,
+            MaximumRetryCount: opts.restartPolicyMaximumRetryCount ?? 0,
+          }
+        : undefined,
+  });
+}
+
 export async function getContainerLogs(
   id: string,
   opts: { tail?: number; timestamps?: boolean } = {}

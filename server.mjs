@@ -148,10 +148,10 @@ app.prepare().then(() => {
     const cwd = process.env.HOST_FS_MOUNT ?? "/host_system";
 
     const ptyProcess =
-      mode === "container"
-        ? pty.spawn(
-            "docker",
-            ["exec", "-it", containerId, "/bin/sh"],
+        mode === "container"
+          ? pty.spawn(
+              "docker",
+              ["exec", "-u", "0", "-it", containerId, "/bin/sh"],
             {
               name: "xterm-256color",
               cols: 80,

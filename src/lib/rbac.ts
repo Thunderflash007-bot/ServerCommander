@@ -60,11 +60,13 @@ export function canStartContainer(p: FullPermissions | null, containerId: string
 
 export function canStopContainer(p: FullPermissions | null, containerId: string): boolean {
   if (!p) return false;
+  if (p.dockerViewAll) return true;
   return !!getContainerPerm(p, containerId)?.canStop;
 }
 
 export function canRestartContainer(p: FullPermissions | null, containerId: string): boolean {
   if (!p) return false;
+  if (p.dockerViewAll) return true;
   return !!getContainerPerm(p, containerId)?.canRestart;
 }
 

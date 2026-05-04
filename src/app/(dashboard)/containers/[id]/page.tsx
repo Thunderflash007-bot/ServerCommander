@@ -14,6 +14,7 @@ import {
 } from "@/lib/rbac";
 import Link from "next/link";
 import { ContainerDetailsActions } from "@/components/docker/ContainerDetailsActions";
+import { ContainerEditPanel } from "@/components/docker/ContainerEditPanel";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -29,20 +30,32 @@ export default async function ContainerInspectPage({ params }: Params) {
     redirect("/containers");
   }
 
-  let inspect: unknown = null;
+  let inspect: Record<string, unknown> | null = null;
   let error: string | null = null;
 
   try {
-    inspect = await getContainerInspect(id);
+    inspect = (await getContainerInspect(id)) as unknown as Record<string, unknown>;
   } catch (cause) {
     error = cause instanceof Error ? cause.message : "Failed to inspect container";
   }
+
+  const state = (inspect?.State as { Running?: boolean; Status?: string } | undefined) ?? {};
+  const name =
+    typeof inspect?.Name === "string"
+      ? inspect.Name.replace(/^\//, "")
+      : id.substring(0, 12);
+  const image = (inspect?.Config as { Image?: string } | undefined)?.Image ?? "unknown";
+  const restartPolicy =
+    (inspect?.HostConfig as { RestartPolicy?: { Name?: string } } | undefined)?.RestartPolicy
+      ?.Name ?? "no";
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Container Details</h1>
-        <p className="text-muted-foreground text-sm mt-1 font-mono break-all">{id}</p>
+        <p className="text-muted-foreground text-sm mt-1">
+          <span className="font-mono break-all">{id}</span>
+        </p>
       </div>
 
       {error ? (
@@ -51,15 +64,42 @@ export default async function ContainerInspectPage({ params }: Params) {
         </div>
       ) : (
         <>
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Name</div>
+              <div className="mt-1 text-sm font-semibold text-foreground font-mono break-all">{name}</div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Status</div>
+              <div className="mt-1 text-sm font-semibold text-foreground">{state.Status ?? (state.Running ? "running" : "stopped")}</div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Image</div>
+              <div className="mt-1 text-sm font-semibold text-foreground font-mono break-all">{image}</div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Restart Policy</div>
+              <div className="mt-1 text-sm font-semibold text-foreground">{restartPolicy}</div>
+            </div>
+          </div>
+
           <ContainerDetailsActions
             id={id}
+            isRunning={!!state.Running}
             canStart={canStartContainer(perms, id)}
             canStop={canStopContainer(perms, id)}
             canRestart={canRestartContainer(perms, id)}
             canDelete={canDeleteContainer(perms, id)}
           />
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <ContainerEditPanel
+            id={id}
+            currentName={name}
+            restartPolicy={restartPolicy}
+            canEdit={canRestartContainer(perms, id) || canDeleteContainer(perms, id)}
+          />
+
+          <div className="grid gap-4 md:grid-cols-2">
             <Link
               href={`/containers/${id}/logs`}
               className={`rounded-lg border border-border bg-card p-4 text-sm transition ${canViewLogs(perms, id) ? "hover:bg-accent" : "opacity-50 pointer-events-none"}`}
@@ -74,15 +114,7 @@ export default async function ContainerInspectPage({ params }: Params) {
               <div className="font-semibold text-foreground">Console</div>
               <div className="text-muted-foreground mt-1">Interactive shell inside container</div>
             </Link>
-            <div className="rounded-lg border border-border bg-card p-4 text-sm">
-              <div className="font-semibold text-foreground">Inspect JSON</div>
-              <div className="text-muted-foreground mt-1">Low-level metadata below</div>
-            </div>
           </div>
-
-          <pre className="overflow-auto rounded-xl border border-border bg-card p-4 text-xs text-foreground whitespace-pre-wrap break-all">
-            {JSON.stringify(inspect, null, 2)}
-          </pre>
         </>
       )}
     </div>
