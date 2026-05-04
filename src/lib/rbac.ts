@@ -103,6 +103,17 @@ export function getPathPermission(
   requestedPath: string
 ): FsPathPermission | null {
   if (!p) return null;
+  if (p.fsAccess && p.fsPathPerms.length === 0) {
+    return {
+      id: "implicit-full-access",
+      permissionId: p.id,
+      path: "/",
+      readOnly: false,
+      canCreate: true,
+      canDelete: true,
+      createdAt: new Date(0),
+    };
+  }
   // Find the most specific matching path (longest prefix wins)
   const normalized = requestedPath.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
   let best: FsPathPermission | null = null;

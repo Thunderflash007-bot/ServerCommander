@@ -9,9 +9,48 @@ async function main() {
 
   const existing = await prisma.user.findUnique({
     where: { username: adminUsername },
+    include: {
+      permissions: {
+        include: {
+          fsPathPerms: true,
+        },
+      },
+    },
   });
 
   if (existing) {
+    if (existing.permissions) {
+      await prisma.userPermission.update({
+        where: { id: existing.permissions.id },
+        data: {
+          dockerAccess: true,
+          dockerViewAll: true,
+          dockerImages: true,
+          dockerVolumes: true,
+          dockerNetworks: true,
+          dockerCreate: true,
+          dockerDelete: true,
+          fsAccess: true,
+          terminalAccess: true,
+          terminalReadOnly: false,
+          terminalMaxSessions: 0,
+        },
+      });
+
+      const hasRootPath = existing.permissions.fsPathPerms.some((entry) => entry.path === "/");
+      if (!hasRootPath) {
+        await prisma.fsPathPermission.create({
+          data: {
+            permissionId: existing.permissions.id,
+            path: "/",
+            readOnly: false,
+            canCreate: true,
+            canDelete: true,
+          },
+        });
+      }
+    }
+
     console.log(`[seed] Admin user "${adminUsername}" already exists — skipping.`);
     return;
   }
@@ -35,6 +74,14 @@ async function main() {
           dockerCreate: true,
           dockerDelete: true,
           fsAccess: true,
+          fsPathPerms: {
+            create: {
+              path: "/",
+              readOnly: false,
+              canCreate: true,
+              canDelete: true,
+            },
+          },
           terminalAccess: true,
           terminalReadOnly: false,
           terminalMaxSessions: 0,

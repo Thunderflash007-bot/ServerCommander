@@ -115,72 +115,97 @@ function TerminalPane({ sessionId, readOnly }: { sessionId: string; readOnly: bo
   const containerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
+    let dispose: (() => void) | undefined;
 
     async function init() {
-      const { Terminal } = await import("@xterm/xterm");
-      const { FitAddon } = await import("@xterm/addon-fit");
-      const { WebLinksAddon } = await import("@xterm/addon-web-links");
+      try {
+        const { Terminal } = await import("@xterm/xterm");
+        const { FitAddon } = await import("@xterm/addon-fit");
+        const { WebLinksAddon } = await import("@xterm/addon-web-links");
 
-      if (!mounted || !containerRef.current) return;
+        if (!mounted || !containerRef.current) return;
 
-      const term = new Terminal({
-        theme: {
-          background: "#0d1117",
-          foreground: "#e6edf3",
-          cursor: "#58a6ff",
-          selectionBackground: "#264f7844",
-        },
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
-        fontSize: 13,
-        lineHeight: 1.4,
-        cursorBlink: true,
-        scrollback: 5000,
-      });
+        const term = new Terminal({
+          theme: {
+            background: "#0d1117",
+            foreground: "#e6edf3",
+            cursor: "#58a6ff",
+            selectionBackground: "#264f7844",
+          },
+          fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+          fontSize: 13,
+          lineHeight: 1.4,
+          cursorBlink: true,
+          scrollback: 5000,
+        });
 
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.loadAddon(new WebLinksAddon());
-      term.open(containerRef.current);
-      fitAddon.fit();
-      xtermRef.current = term;
+        const fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+        term.loadAddon(new WebLinksAddon());
+        term.open(containerRef.current);
+        fitAddon.fit();
+        xtermRef.current = term;
 
-      // Connect to WebSocket terminal server
-      const socket: Socket = io("/terminal", {
-        path: "/api/socket",
-        query: { sessionId, readOnly: String(readOnly) },
-      });
-      socketRef.current = socket;
+        // Connect to WebSocket terminal server
+        const socket: Socket = io("/terminal", {
+          path: "/api/socket",
+          query: { sessionId, readOnly: String(readOnly) },
+          withCredentials: true,
+          transports: ["websocket", "polling"],
+        });
+        socketRef.current = socket;
 
-      socket.on("output", (data: string) => term.write(data));
-      socket.on("connect_error", () => term.write("\r\n\x1b[31mConnection failed. Retrying…\x1b[0m\r\n"));
-      socket.on("disconnect", () => term.write("\r\n\x1b[33mDisconnected from shell.\x1b[0m\r\n"));
+        socket.on("output", (data: string) => term.write(data));
+        socket.on("connect_error", (cause) => {
+          const message = cause instanceof Error ? cause.message : "Connection failed";
+          setError(message);
+          term.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
+        });
+        socket.on("disconnect", () => term.write("\r\n\x1b[33mDisconnected from shell.\x1b[0m\r\n"));
 
-      term.onData((data) => {
-        if (!readOnly) socket.emit("input", data);
-      });
+        term.onData((data) => {
+          if (!readOnly) socket.emit("input", data);
+        });
 
-      term.onResize(({ cols, rows }) => socket.emit("resize", { cols, rows }));
+        term.onResize(({ cols, rows }) => socket.emit("resize", { cols, rows }));
 
-      // Fit on window resize
-      const ro = new ResizeObserver(() => fitAddon.fit());
-      ro.observe(containerRef.current);
+        // Fit on window resize
+        const ro = new ResizeObserver(() => fitAddon.fit());
+        ro.observe(containerRef.current);
 
-      return () => {
-        ro.disconnect();
-        term.dispose();
-        socket.disconnect();
-      };
+        dispose = () => {
+          ro.disconnect();
+          term.dispose();
+          socket.disconnect();
+        };
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : "Terminal initialization failed";
+        if (mounted) {
+          setError(message);
+        }
+      }
     }
 
-    const cleanup = init();
+    void init();
     return () => {
       mounted = false;
-      cleanup.then((fn) => fn?.());
+      dispose?.();
     };
   }, [sessionId, readOnly]);
 
-  return <div ref={containerRef} className="w-full h-full p-1" />;
+  return (
+    <div className="w-full h-full p-1">
+      {error ? (
+        <div className="flex h-full items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          {error}
+        </div>
+      ) : (
+        <div ref={containerRef} className="w-full h-full" />
+      )}
+    </div>
+  );
 }
