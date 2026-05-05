@@ -54,13 +54,22 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (currentUser.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { displayName, isActive, password, permissions, permissionGroupIds } = body;
+  const { displayName, isActive, password, permissions, permissionGroupIds, forcePasswordChange } = body;
 
   // Update base user fields
   const updateData: Record<string, unknown> = {};
   if (displayName !== undefined) updateData.displayName = displayName;
   if (isActive !== undefined) updateData.isActive = isActive;
-  if (password) updateData.passwordHash = await bcrypt.hash(password, 12);
+  if (password !== undefined) {
+    if (typeof password !== "string" || password.trim().length < 8) {
+      return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    }
+
+    updateData.passwordHash = await bcrypt.hash(password, 12);
+    updateData.mustChangePassword = forcePasswordChange === undefined ? true : Boolean(forcePasswordChange);
+  } else if (forcePasswordChange !== undefined) {
+    updateData.mustChangePassword = Boolean(forcePasswordChange);
+  }
 
   await db.user.update({ where: { id }, data: updateData });
 
@@ -107,7 +116,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     { userId: currentUser.id, username: currentUser.username, role: currentUser.role, sessionId: "" },
     "UPDATE_USER",
     `user:${id}`,
-    undefined,
+    password !== undefined ? "Admin reset user password" : undefined,
     true,
     req
   );

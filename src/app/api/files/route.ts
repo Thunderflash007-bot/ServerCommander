@@ -212,9 +212,10 @@ export async function POST(req: NextRequest) {
   if (contentType.includes("multipart/form-data")) {
     const formData = await req.formData();
     const targetDir = String(formData.get("path") ?? "/");
-    const file = formData.get("file");
+    const rawFiles = formData.getAll("file").filter((entry): entry is File => entry instanceof File);
+    const relativePaths = formData.getAll("relativePath").map((entry) => String(entry ?? ""));
 
-    if (!(file instanceof File)) {
+    if (rawFiles.length === 0) {
       return jsonError("file is required", 400);
     }
 
@@ -223,22 +224,35 @@ export async function POST(req: NextRequest) {
       return jsonError("Create permission denied", 403);
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const uploads = await Promise.all(
+      rawFiles.map(async (file, index) => ({
+        file,
+        relativePath: relativePaths[index] ? normalizeVirtualPath(`/${relativePaths[index]}`) : `/${file.name}`,
+        buffer: Buffer.from(await file.arrayBuffer()),
+      }))
+    );
 
     if (isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
         const remoteDir = resolveRemotePath(virtualDir);
         await sftp.mkdir(remoteDir, true);
-        const remotePath = path.posix.join(remoteDir, file.name);
-        await sftp.put(buffer, remotePath);
+        for (const upload of uploads) {
+          const remotePath = path.posix.join(remoteDir, upload.relativePath.replace(/^\//, ""));
+          const remoteParent = path.posix.dirname(remotePath);
+          await sftp.mkdir(remoteParent, true);
+          await sftp.put(upload.buffer, remotePath);
+        }
       });
-      return NextResponse.json({ success: true, path: normalizeVirtualPath(path.posix.join(virtualDir, file.name)) });
+      return NextResponse.json({ success: true, uploaded: uploads.length });
     }
 
     const realDir = resolveSafePath(virtualDir);
-    const realPath = path.join(realDir, file.name);
-    await fs.writeFile(realPath, buffer);
-    return NextResponse.json({ success: true, path: toVirtualPath(realPath) });
+    for (const upload of uploads) {
+      const realPath = path.join(realDir, upload.relativePath.replace(/^\//, ""));
+      await fs.mkdir(path.dirname(realPath), { recursive: true });
+      await fs.writeFile(realPath, upload.buffer);
+    }
+    return NextResponse.json({ success: true, uploaded: uploads.length });
   }
 
   const body = await req.json();

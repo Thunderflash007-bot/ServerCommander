@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Square, RotateCcw, Trash2, Save, Plus } from "lucide-react";
+import { Play, Square, RotateCcw, Trash2, Save, Plus, FileCode2, CheckCircle2 } from "lucide-react";
+import { DiffViewer } from "@/components/common/DiffViewer";
 
 type StackSummary = {
   name: string;
@@ -18,6 +19,13 @@ type StackManagerProps = {
   canDelete: boolean;
 };
 
+type StackFileSummary = {
+  path: string;
+  updatedAt: string;
+  size: number;
+  kind: "compose" | "env" | "config";
+};
+
 const starterCompose = `services:\n  nginx:\n    image: nginx:alpine\n    ports:\n      - \"8080:80\"\n`;
 
 export function StackManager({ canManage, canDelete }: StackManagerProps) {
@@ -27,7 +35,13 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [composeContent, setComposeContent] = useState("");
   const [newName, setNewName] = useState("");
+  const [files, setFiles] = useState<StackFileSummary[]>([]);
+  const [selectedFile, setSelectedFile] = useState("docker-compose.yml");
+  const [newFileName, setNewFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [validationOutput, setValidationOutput] = useState<string | null>(null);
+  const [originalContent, setOriginalContent] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
 
   async function parseApiResponse(res: Response) {
     const text = await res.text();
@@ -62,6 +76,44 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
       return;
     }
     setComposeContent(String(data.content ?? ""));
+    setOriginalContent(String(data.content ?? ""));
+    setFiles((data.files as StackFileSummary[] | undefined) ?? []);
+    setSelectedFile(String(data.selectedFile ?? "docker-compose.yml"));
+    setValidationOutput(null);
+    setShowDiff(false);
+  }
+
+  async function selectFile(filePath: string) {
+    if (!selected) return;
+    const res = await fetch(`/api/docker/stacks/${selected}?file=${encodeURIComponent(filePath)}`);
+    const data = await parseApiResponse(res);
+    if (!res.ok) {
+      setError(String(data.error ?? "Failed to load stack file"));
+      return;
+    }
+    setSelectedFile(String(data.selectedFile ?? filePath));
+    setComposeContent(String(data.content ?? ""));
+    setOriginalContent(String(data.content ?? ""));
+    setFiles((data.files as StackFileSummary[] | undefined) ?? []);
+    setValidationOutput(null);
+    setShowDiff(false);
+  }
+
+  async function addFile() {
+    if (!selected || !newFileName.trim()) return;
+    setError(null);
+    const res = await fetch(`/api/docker/stacks/${selected}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add-file", file: newFileName.trim(), content: "" }),
+    });
+    const data = await parseApiResponse(res);
+    if (!res.ok) {
+      setError(String(data.error ?? "Failed to create file"));
+      return;
+    }
+    setNewFileName("");
+    await selectFile(newFileName.trim());
   }
 
   useEffect(() => {
@@ -89,15 +141,19 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
   async function runAction(action: string) {
     if (!selected) return;
     setError(null);
+    setValidationOutput(null);
     const res = await fetch(`/api/docker/stacks/${selected}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, content: composeContent }),
+      body: JSON.stringify({ action, content: composeContent, file: selectedFile }),
     });
     const data = await parseApiResponse(res);
     if (!res.ok) {
       setError(String(data.error ?? `${action} failed`));
       return;
+    }
+    if (action === "validate") {
+      setValidationOutput(String(data.output ?? "Compose file is valid."));
     }
     startTransition(() => router.refresh());
     await loadStacks();
@@ -149,6 +205,8 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
           {canManage && selected && (
             <>
               <button onClick={() => void runAction("save")} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent transition"><span className="inline-flex items-center gap-1"><Save className="w-4 h-4" />Save</span></button>
+              <button onClick={() => setShowDiff((current) => !current)} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent transition">{showDiff ? "Editor" : "Diff"}</button>
+              <button onClick={() => void runAction("validate")} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent transition"><span className="inline-flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />Validate</span></button>
               <button onClick={() => void runAction("deploy")} className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition">Deploy</button>
               <button onClick={() => void runAction("start")} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent transition"><span className="inline-flex items-center gap-1"><Play className="w-4 h-4" />Start</span></button>
               <button onClick={() => void runAction("stop")} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent transition"><span className="inline-flex items-center gap-1"><Square className="w-4 h-4" />Stop</span></button>
@@ -160,14 +218,56 @@ export function StackManager({ canManage, canDelete }: StackManagerProps) {
 
         {error && <div className="border-b border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>}
 
-        <textarea
-          value={composeContent}
-          onChange={(event) => setComposeContent(event.target.value)}
-          disabled={!selected || !canManage || isPending}
-          spellCheck={false}
-          className="min-h-[70vh] w-full resize-none bg-background p-4 font-mono text-sm text-foreground outline-none disabled:opacity-60"
-          placeholder="Select or create a stack to edit docker-compose.yml"
-        />
+        {selected && (
+          <div className="border-b border-border bg-muted/10 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {files.map((file) => (
+                <button
+                  key={file.path}
+                  onClick={() => void selectFile(file.path)}
+                  className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${selectedFile === file.path ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-background hover:bg-accent"}`}
+                >
+                  <FileCode2 className="w-3.5 h-3.5" />
+                  {file.path}
+                </button>
+              ))}
+            </div>
+            {canManage && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  value={newFileName}
+                  onChange={(event) => setNewFileName(event.target.value)}
+                  placeholder="configs/app.env"
+                  className="w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+                <button onClick={() => void addFile()} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent">
+                  Datei anlegen
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {validationOutput && (
+          <div className="border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 whitespace-pre-wrap">
+            {validationOutput}
+          </div>
+        )}
+
+        {showDiff ? (
+          <div className="min-h-[70vh] p-4 bg-background overflow-auto">
+            <DiffViewer original={originalContent} current={composeContent} title={`Diff: ${selectedFile}`} />
+          </div>
+        ) : (
+          <textarea
+            value={composeContent}
+            onChange={(event) => setComposeContent(event.target.value)}
+            disabled={!selected || !canManage || isPending}
+            spellCheck={false}
+            className="min-h-[70vh] w-full resize-none bg-background p-4 font-mono text-sm text-foreground outline-none disabled:opacity-60"
+            placeholder="Select or create a stack to edit docker-compose.yml"
+          />
+        )}
       </div>
     </div>
   );

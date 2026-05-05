@@ -12,6 +12,7 @@ const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
 const port = parseInt(process.env.PORT ?? "3000", 10);
 const prisma = new PrismaClient();
+const autoUpdateIntervalMs = Math.max(60_000, parseInt(process.env.AUTO_UPDATE_RUN_INTERVAL_MS ?? "300000", 10));
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
@@ -58,13 +59,15 @@ function getSshRuntimeConfig() {
   const host = process.env.SSH_HOST?.trim();
   const username = process.env.SSH_USERNAME?.trim();
   const password = getSshPassword();
+  const privateKey = getSshPrivateKey();
+  const passphrase = getSshKeyPassphrase();
   const port = Number(process.env.SSH_PORT ?? "22");
 
-  if (!host || !username || !password) {
-    throw new Error("SSH backend is enabled but SSH_HOST/SSH_USERNAME/SSH_PASSWORD_ENC are missing");
+  if (!host || !username || (!password && !privateKey)) {
+    throw new Error("SSH backend is enabled but SSH_HOST/SSH_USERNAME and SSH_PRIVATE_KEY_ENC or SSH_PASSWORD_ENC are required");
   }
 
-  return { host, username, password, port };
+  return { host, username, password: privateKey ? undefined : password, privateKey: privateKey || undefined, passphrase: privateKey ? passphrase || undefined : undefined, port };
 }
 
 function getSshPassword() {
@@ -75,6 +78,18 @@ function getSshPassword() {
     return decryptSecret(encryptedPassword);
   }
   return fallbackPassword ?? "";
+}
+
+function getSshPrivateKey() {
+  const encryptedPrivateKey = process.env.SSH_PRIVATE_KEY_ENC?.trim();
+  if (!encryptedPrivateKey) return "";
+  return decryptSecret(encryptedPrivateKey);
+}
+
+function getSshKeyPassphrase() {
+  const encryptedPassphrase = process.env.SSH_KEY_PASSPHRASE_ENC?.trim();
+  if (!encryptedPassphrase) return "";
+  return decryptSecret(encryptedPassphrase);
 }
 
 function decryptSecret(ciphertext) {
@@ -129,6 +144,23 @@ app.prepare().then(() => {
     const parsedUrl = parse(req.url, true);
     handle(req, res, parsedUrl);
   });
+
+  async function triggerAutoUpdateCycle() {
+    if (!process.env.JWT_SECRET) {
+      return;
+    }
+
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/internal/auto-update`, {
+        method: "POST",
+        headers: {
+          "x-internal-audit-key": process.env.JWT_SECRET,
+        },
+      });
+    } catch (error) {
+      console.error("[auto-update-runner]", error);
+    }
+  }
 
   const io = new SocketIOServer(httpServer, {
     path: "/api/socket",
@@ -196,6 +228,10 @@ app.prepare().then(() => {
       socket.disconnect();
       return;
     }
+
+    setInterval(() => {
+      void triggerAutoUpdateCycle();
+    }, autoUpdateIntervalMs);
     userSessionCount.set(userId, current + 1);
 
     const cwd = process.env.HOST_FS_MOUNT ?? "/host_system";
@@ -239,6 +275,8 @@ app.prepare().then(() => {
           port: sshCfg.port,
           username: sshCfg.username,
           password: sshCfg.password,
+          privateKey: sshCfg.privateKey,
+          passphrase: sshCfg.passphrase,
           readyTimeout: 15000,
         });
       } catch (err) {

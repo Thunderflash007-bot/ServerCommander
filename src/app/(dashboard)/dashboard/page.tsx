@@ -4,6 +4,7 @@ import { canAccessDocker, filterVisibleContainerIds } from "@/lib/rbac";
 import type { FullPermissions } from "@/lib/rbac";
 import { StatusCard } from "@/components/dashboard/StatusCard";
 import { ContainerTable } from "@/components/docker/ContainerTable";
+import { ContainerStatsPanel } from "@/components/docker/ContainerStatsPanel";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,8 @@ export default async function DashboardPage() {
       </div>
 
       {/* Quick Container Overview */}
+      {hasDocker && <ContainerStatsPanel />}
+
       {hasDocker && visibleContainers.length > 0 && (
         <div>
           <h2 className="text-lg font-semibold mb-3">Container Overview</h2>

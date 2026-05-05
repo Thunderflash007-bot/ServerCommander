@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { FullPermissions } from "@/lib/rbac";
 import { canReadPath, canDeleteInPath, canCreateInPath, canWritePath } from "@/lib/rbac";
+import { DiffViewer } from "@/components/common/DiffViewer";
 
 interface FileEntry {
   name: string;
@@ -36,9 +37,11 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingFile, setEditingFile] = useState<{ path: string; name: string; content: string } | null>(null);
-  const [pendingName, setPendingName] = useState("");
+  const [editingFile, setEditingFile] = useState<{ path: string; name: string; content: string; originalContent: string } | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const loadPath = useCallback(
     async (p: string) => {
@@ -75,6 +78,13 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
       loadPath("/");
     }
   }, [permissions, loadPath]);
+
+  useEffect(() => {
+    const input = folderInputRef.current;
+    if (!input) return;
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
+  }, []);
 
   async function handleDelete(entry: FileEntry) {
     if (!canDeleteInPath(permissions, entry.path)) return;
@@ -114,7 +124,8 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
       setError(data.error ?? "Failed to open file");
       return;
     }
-    setEditingFile({ path: entry.path, name: entry.name, content: data.content ?? "" });
+    setEditingFile({ path: entry.path, name: entry.name, content: data.content ?? "", originalContent: data.content ?? "" });
+    setShowDiff(false);
   }
 
   async function saveEditor() {
@@ -183,11 +194,15 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
     loadPath(currentPath);
   }
 
-  async function handleUpload(files: FileList | null) {
-    if (!files?.length) return;
+  async function handleUpload(files: FileList | File[] | null, relativePaths?: string[]) {
+    if (!files || files.length === 0) return;
     const formData = new FormData();
     formData.append("path", currentPath);
-    formData.append("file", files[0]);
+    Array.from(files).forEach((file, index) => {
+      formData.append("file", file);
+      const candidateRelativePath = relativePaths?.[index] || ("webkitRelativePath" in file ? String((file as File & { webkitRelativePath?: string }).webkitRelativePath ?? "") : "");
+      formData.append("relativePath", candidateRelativePath || file.name);
+    });
     const res = await fetch("/api/files", { method: "POST", body: formData });
     const data = await res.json();
     if (!res.ok) {
@@ -197,11 +212,77 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
     loadPath(currentPath);
   }
 
+  async function extractDroppedFiles(items: DataTransferItemList): Promise<{ files: File[]; relativePaths: string[] }> {
+    const collected: Array<{ file: File; relativePath: string }> = [];
+
+    async function walkEntry(entry: FileSystemEntry, basePath: string) {
+      if (entry.isFile) {
+        const fileEntry = entry as FileSystemFileEntry;
+        const file = await new Promise<File>((resolve, reject) => {
+          fileEntry.file(resolve, reject);
+        });
+        collected.push({ file, relativePath: basePath ? `${basePath}/${file.name}` : file.name });
+        return;
+      }
+
+      if (entry.isDirectory) {
+        const dirEntry = entry as FileSystemDirectoryEntry;
+        const reader = dirEntry.createReader();
+        while (true) {
+          const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+            reader.readEntries(resolve, reject);
+          });
+          if (entries.length === 0) break;
+          for (const child of entries) {
+            await walkEntry(child, basePath ? `${basePath}/${dirEntry.name}` : dirEntry.name);
+          }
+        }
+      }
+    }
+
+    for (const item of Array.from(items)) {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) {
+        await walkEntry(entry, "");
+        continue;
+      }
+      const file = item.getAsFile();
+      if (file) {
+        collected.push({ file, relativePath: file.name });
+      }
+    }
+
+    return {
+      files: collected.map((entry) => entry.file),
+      relativePaths: collected.map((entry) => entry.relativePath),
+    };
+  }
+
   // Breadcrumbs
   const parts = currentPath.split("/").filter(Boolean);
 
   return (
-    <div className="flex flex-col h-full rounded-xl border border-border overflow-hidden bg-card">
+    <div
+      className={`flex flex-col h-full rounded-xl border overflow-hidden bg-card transition ${isDragActive ? "border-primary bg-primary/5" : "border-border"}`}
+      onDragOver={(event) => {
+        if (!canCreateInPath(permissions, currentPath)) return;
+        event.preventDefault();
+        setIsDragActive(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setIsDragActive(false);
+      }}
+      onDrop={(event) => {
+        if (!canCreateInPath(permissions, currentPath)) return;
+        event.preventDefault();
+        setIsDragActive(false);
+        void (async () => {
+          const extracted = await extractDroppedFiles(event.dataTransfer.items);
+          await handleUpload(extracted.files, extracted.relativePaths);
+        })();
+      }}
+    >
       {/* Toolbar */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5 bg-muted/20 shrink-0">
         {/* Breadcrumbs */}
@@ -255,6 +336,12 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
             >
               <span className="inline-flex items-center gap-1"><Upload className="w-3.5 h-3.5" />Upload</span>
             </button>
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              className="rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-accent transition shrink-0"
+            >
+              <span className="inline-flex items-center gap-1"><Upload className="w-3.5 h-3.5" />Folder</span>
+            </button>
           </>
         )}
         <input
@@ -263,7 +350,20 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
           className="hidden"
           onChange={(event) => void handleUpload(event.target.files)}
         />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(event) => void handleUpload(event.target.files)}
+        />
       </div>
+
+      {isDragActive && canCreateInPath(permissions, currentPath) && (
+        <div className="border-b border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">
+          Dateien oder ganze Ordner hier ablegen, um sie nach {currentPath} hochzuladen.
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
@@ -374,16 +474,23 @@ export function FileExplorer({ permissions }: FileExplorerProps) {
               <div className="text-xs text-muted-foreground font-mono">{editingFile.path}</div>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={() => setShowDiff((current) => !current)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent transition">{showDiff ? "Editor" : "Diff"}</button>
               <button onClick={() => setEditingFile(null)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent transition">Cancel</button>
               <button onClick={saveEditor} className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition">Save</button>
             </div>
           </div>
-          <textarea
-            value={editingFile.content}
-            onChange={(event) => setEditingFile({ ...editingFile, content: event.target.value })}
-            className="min-h-0 flex-1 resize-none bg-background p-4 font-mono text-sm text-foreground outline-none"
-            spellCheck={false}
-          />
+          {showDiff ? (
+            <div className="p-4 min-h-0 flex-1 overflow-auto bg-background">
+              <DiffViewer original={editingFile.originalContent} current={editingFile.content} title={`Diff: ${editingFile.name}`} />
+            </div>
+          ) : (
+            <textarea
+              value={editingFile.content}
+              onChange={(event) => setEditingFile({ ...editingFile, content: event.target.value })}
+              className="min-h-0 flex-1 resize-none bg-background p-4 font-mono text-sm text-foreground outline-none"
+              spellCheck={false}
+            />
+          )}
         </div>
       )}
     </div>

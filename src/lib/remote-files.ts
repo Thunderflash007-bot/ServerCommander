@@ -21,10 +21,23 @@ function getRequiredEnv(name: string): string {
 }
 
 export function getSshConfig() {
+  const privateKeyEnc = process.env.SSH_PRIVATE_KEY_ENC?.trim();
+  const privateKeyPassphraseEnc = process.env.SSH_KEY_PASSPHRASE_ENC?.trim();
   const encryptedPassword = process.env.SSH_PASSWORD_ENC?.trim();
   const fallbackPassword = process.env.SSH_PASSWORD?.trim();
 
   let password = "";
+  let privateKey = "";
+  let passphrase = "";
+
+  if (privateKeyEnc) {
+    privateKey = decryptSecret(privateKeyEnc);
+  }
+
+  if (privateKeyPassphraseEnc) {
+    passphrase = decryptSecret(privateKeyPassphraseEnc);
+  }
+
   if (encryptedPassword) {
     password = decryptSecret(encryptedPassword);
   } else if (fallbackPassword) {
@@ -32,15 +45,17 @@ export function getSshConfig() {
     password = fallbackPassword;
   }
 
-  if (!password) {
-    throw new Error("Missing SSH password. Set SSH_PASSWORD_ENC (preferred) or SSH_PASSWORD");
+  if (!privateKey && !password) {
+    throw new Error("Missing SSH credentials. Set SSH_PRIVATE_KEY_ENC or SSH_PASSWORD_ENC/SSH_PASSWORD");
   }
 
   return {
     host: getRequiredEnv("SSH_HOST"),
     port: Number(process.env.SSH_PORT ?? "22"),
     username: getRequiredEnv("SSH_USERNAME"),
-    password,
+    password: privateKey ? undefined : password,
+    privateKey: privateKey || undefined,
+    passphrase: privateKey ? passphrase || undefined : undefined,
   };
 }
 

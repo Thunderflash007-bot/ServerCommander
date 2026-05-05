@@ -17,6 +17,13 @@ export interface StackSummary {
   runningCount: number;
 }
 
+export interface StackFileSummary {
+  path: string;
+  updatedAt: string;
+  size: number;
+  kind: "compose" | "env" | "config";
+}
+
 export async function ensureStacksDir() {
   await fs.mkdir(STACKS_DIR, { recursive: true });
 }
@@ -27,6 +34,78 @@ export function getStackDir(name: string) {
 
 export function getStackComposePath(name: string) {
   return path.join(getStackDir(name), "docker-compose.yml");
+}
+
+function getStackPrimaryComposeCandidates(name: string) {
+  const dir = getStackDir(name);
+  return [
+    path.join(dir, "docker-compose.yml"),
+    path.join(dir, "docker-compose.yaml"),
+    path.join(dir, "compose.yml"),
+    path.join(dir, "compose.yaml"),
+  ];
+}
+
+function getStackFileKind(filePath: string): StackFileSummary["kind"] {
+  if (filePath.endsWith(".env") || filePath.endsWith(".env.local")) return "env";
+  if (filePath.endsWith(".yml") || filePath.endsWith(".yaml")) return "compose";
+  return "config";
+}
+
+function normalizeRelativeStackPath(relativePath: string) {
+  const trimmed = relativePath.trim().replace(/\\/g, "/");
+  if (!trimmed) {
+    throw new Error("File path is required");
+  }
+
+  if (trimmed.startsWith("/") || trimmed.includes("..")) {
+    throw new Error("Invalid stack file path");
+  }
+
+  if (!/^[a-zA-Z0-9._/-]+$/.test(trimmed)) {
+    throw new Error("Stack file path contains unsupported characters");
+  }
+
+  return trimmed;
+}
+
+async function fileExists(filePath: string) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findPrimaryComposePath(name: string) {
+  for (const candidate of getStackPrimaryComposeCandidates(name)) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+
+  return getStackComposePath(name);
+}
+
+async function walkStackFiles(rootDir: string, currentDir: string, acc: StackFileSummary[]): Promise<void> {
+  const entries = await fs.readdir(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      await walkStackFiles(rootDir, fullPath, acc);
+      continue;
+    }
+
+    const stat = await fs.stat(fullPath);
+    const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
+    acc.push({
+      path: relativePath,
+      updatedAt: stat.mtime.toISOString(),
+      size: stat.size,
+      kind: getStackFileKind(relativePath),
+    });
+  }
 }
 
 export async function listStacks(): Promise<StackSummary[]> {
@@ -59,13 +138,27 @@ export async function listStacks(): Promise<StackSummary[]> {
 }
 
 export async function readStackFile(name: string) {
-  return fs.readFile(getStackComposePath(name), "utf-8");
+  return fs.readFile(await findPrimaryComposePath(name), "utf-8");
 }
 
-export async function writeStackFile(name: string, content: string) {
+export async function readStackEntry(name: string, relativePath: string) {
+  const normalizedPath = normalizeRelativeStackPath(relativePath);
+  return fs.readFile(path.join(getStackDir(name), normalizedPath), "utf-8");
+}
+
+export async function writeStackFile(name: string, content: string, relativePath = "docker-compose.yml") {
+  const normalizedPath = normalizeRelativeStackPath(relativePath);
   const dir = getStackDir(name);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(getStackComposePath(name), content, "utf-8");
+  const targetPath = path.join(dir, normalizedPath);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, content, "utf-8");
+}
+
+export async function listStackFiles(name: string): Promise<StackFileSummary[]> {
+  const dir = getStackDir(name);
+  const items: StackFileSummary[] = [];
+  await walkStackFiles(dir, dir, items);
+  return items.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export async function deleteStackFiles(name: string) {
@@ -73,7 +166,7 @@ export async function deleteStackFiles(name: string) {
 }
 
 async function runCompose(name: string, args: string[]) {
-  const composePath = getStackComposePath(name);
+  const composePath = await findPrimaryComposePath(name);
   await ensureStacksDir();
   return execFileAsync(
     "docker",
@@ -104,4 +197,13 @@ export async function restartStack(name: string) {
 
 export async function removeStack(name: string) {
   return runCompose(name, ["down", "--remove-orphans"]);
+}
+
+export async function validateStack(name: string) {
+  return runCompose(name, ["config"]);
+}
+
+export async function updateStackService(name: string, service: string) {
+  await runCompose(name, ["pull", service]);
+  return runCompose(name, ["up", "-d", service]);
 }

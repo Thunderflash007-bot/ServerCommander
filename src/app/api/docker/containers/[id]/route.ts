@@ -13,6 +13,7 @@ import {
   createManagedPortForward,
   removeManagedPortForward,
 } from "@/lib/docker";
+import { getAutoUpdatePolicy, saveAutoUpdatePolicy } from "@/lib/auto-update";
 import {
   canAccessDocker,
   canViewContainer,
@@ -66,6 +67,13 @@ export async function GET(req: NextRequest, { params }: Params) {
       if (!canInspectContainer(perms, id)) return deny();
       const forwards = await listManagedPortForwards(id);
       return NextResponse.json({ forwards });
+    }
+
+    if (type === "auto-update") {
+      if (!canInspectContainer(perms, id)) return deny();
+      const inspect = await getContainerInspect(id);
+      const policy = await getAutoUpdatePolicy(id, inspect.Name.replace(/^\//, ""));
+      return NextResponse.json({ policy });
     }
 
     if (!canInspectContainer(perms, id)) return deny();
@@ -210,6 +218,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         return NextResponse.json({ error: "forwardId is required" }, { status: 400 });
       }
       await removeManagedPortForward(forwardId);
+    } else if (action === "auto-update") {
+      if (!canRestartContainer(perms, id) && !canDeleteContainer(perms, id)) return deny();
+      const inspect = await getContainerInspect(id);
+      await saveAutoUpdatePolicy({
+        containerId: id,
+        containerName: inspect.Name.replace(/^\//, ""),
+        enabled: Boolean(body.enabled),
+        intervalMinutes: parseInt(String(body.intervalMinutes ?? 15), 10),
+      });
     } else {
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

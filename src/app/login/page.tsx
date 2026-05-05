@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showResetInfo, setShowResetInfo] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -114,7 +115,22 @@ export default function LoginPage() {
                 className="w-full rounded-lg border border-input bg-background/70 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition"
                 placeholder="••••••••"
               />
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowResetInfo((current) => !current)}
+                  className="text-xs font-medium text-primary hover:text-primary/80 transition"
+                >
+                  Passwort zurücksetzen
+                </button>
+              </div>
             </div>
+
+            {showResetInfo && (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+                Wenn Sie Ihr Passwort zurücksetzen möchten, kontaktieren Sie bitte einen Administrator. Administratoren können im Admin-Bereich ein temporäres Passwort setzen.
+              </div>
+            )}
 
             {error && (
               <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-sm text-destructive">

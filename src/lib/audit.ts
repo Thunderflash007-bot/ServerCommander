@@ -2,8 +2,10 @@ import { db } from "@/lib/db";
 import type { SessionPayload } from "@/lib/auth";
 import type { NextRequest } from "next/server";
 
+type AuditActor = Partial<Pick<SessionPayload, "userId" | "username" | "role" | "sessionId">>;
+
 export async function writeAuditLog(
-  session: SessionPayload | null,
+  session: SessionPayload | AuditActor | null,
   action: string,
   resource: string,
   detail?: string,
@@ -13,7 +15,7 @@ export async function writeAuditLog(
   await db.auditLog.create({
     data: {
       userId: session?.userId ?? null,
-      username: session?.username ?? "anonymous",
+      username: session?.username?.trim() || "anonymous",
       action,
       resource,
       detail: detail ?? null,

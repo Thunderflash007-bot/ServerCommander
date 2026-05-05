@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Save, ChevronLeft, Container, FolderOpen, Terminal, ShieldCheck } from "lucide-react";
+import { Save, ChevronLeft, Container, FolderOpen, Terminal, ShieldCheck, KeyRound } from "lucide-react";
 import type { ContainerSummary } from "@/lib/docker";
 
 interface Permissions {
@@ -86,6 +86,9 @@ export function UserPermissionsEditor({ user, containers, groups }: UserPermissi
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [newPath, setNewPath] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [confirmResetPassword, setConfirmResetPassword] = useState("");
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   function toggle<K extends keyof Permissions>(key: K) {
     setPerms((p) => ({ ...p, [key]: !p[key] }));
@@ -193,6 +196,50 @@ export function UserPermissionsEditor({ user, containers, groups }: UserPermissi
     }
   }
 
+  async function handlePasswordReset() {
+    setStatus(null);
+
+    if (resetPassword.length < 8) {
+      setStatus({ type: "error", message: "Temporary password must be at least 8 characters." });
+      return;
+    }
+
+    if (resetPassword !== confirmResetPassword) {
+      setStatus({ type: "error", message: "Password confirmation does not match." });
+      return;
+    }
+
+    setResettingPassword(true);
+
+    try {
+      const response = await fetch(`/api/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: resetPassword,
+          forcePasswordChange: true,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      if (!response.ok) {
+        setStatus({ type: "error", message: payload?.error ?? "Password reset failed." });
+        return;
+      }
+
+      setResetPassword("");
+      setConfirmResetPassword("");
+      setStatus({
+        type: "success",
+        message: "Temporary password saved. The user must change it after the next login.",
+      });
+      router.refresh();
+    } finally {
+      setResettingPassword(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header actions */}
@@ -252,6 +299,51 @@ export function UserPermissionsEditor({ user, containers, groups }: UserPermissi
             })}
           </div>
         )}
+      </Section>
+
+      <Section icon={<KeyRound className="w-4 h-4" />} title="Password Reset">
+        <p className="text-sm text-muted-foreground mb-4">
+          Set a temporary password for this user. The account will be forced to choose a new password after the next login.
+        </p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="reset-password">
+              Temporary Password
+            </label>
+            <input
+              id="reset-password"
+              type="password"
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+              minLength={8}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Min 8 characters"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="confirm-reset-password">
+              Confirm Temporary Password
+            </label>
+            <input
+              id="confirm-reset-password"
+              type="password"
+              value={confirmResetPassword}
+              onChange={(e) => setConfirmResetPassword(e.target.value)}
+              minLength={8}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Repeat temporary password"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={handlePasswordReset}
+            disabled={resettingPassword}
+            className="rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-foreground hover:bg-secondary/80 disabled:opacity-50 transition"
+          >
+            {resettingPassword ? "Resetting…" : "Passwort zurücksetzen"}
+          </button>
+        </div>
       </Section>
 
       <Section icon={<ShieldCheck className="w-4 h-4" />} title="Docker — Global Permissions">

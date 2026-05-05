@@ -56,6 +56,18 @@ export interface ContainerEnvSpec {
   value: string;
 }
 
+export interface ContainerLiveStats {
+  id: string;
+  name: string;
+  cpuPercent: number;
+  memoryUsage: number;
+  memoryLimit: number;
+  memoryPercent: number;
+  networkRx: number;
+  networkTx: number;
+  readAt: string;
+}
+
 export interface ContainerCreateSpec {
   name: string;
   image: string;
@@ -91,6 +103,79 @@ export async function getContainerById(id: string): Promise<Dockerode.Container>
 export async function getContainerInspect(id: string) {
   const container = docker.getContainer(id);
   return container.inspect();
+}
+
+async function followPullProgress(image: string) {
+  await new Promise<void>((resolve, reject) => {
+    docker.pull(image, (err: unknown, stream: NodeJS.ReadableStream | undefined) => {
+      if (err || !stream) {
+        reject(err ?? new Error("Unable to pull image"));
+        return;
+      }
+      docker.modem.followProgress(stream, (pullErr: unknown) => {
+        if (pullErr) reject(pullErr);
+        else resolve();
+      });
+    });
+  });
+}
+
+function roundMetric(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function computeCpuPercent(stats: Dockerode.ContainerStats) {
+  const cpuDelta = (stats.cpu_stats?.cpu_usage?.total_usage ?? 0) - (stats.precpu_stats?.cpu_usage?.total_usage ?? 0);
+  const systemDelta = (stats.cpu_stats?.system_cpu_usage ?? 0) - (stats.precpu_stats?.system_cpu_usage ?? 0);
+  const cpuCount = stats.cpu_stats?.online_cpus || stats.cpu_stats?.cpu_usage?.percpu_usage?.length || 1;
+
+  if (cpuDelta <= 0 || systemDelta <= 0) {
+    return 0;
+  }
+
+  return roundMetric((cpuDelta / systemDelta) * cpuCount * 100);
+}
+
+function computeMemoryUsage(stats: Dockerode.ContainerStats) {
+  const usage = stats.memory_stats?.usage ?? 0;
+  const cache = (stats.memory_stats?.stats as { cache?: number } | undefined)?.cache ?? 0;
+  return Math.max(0, usage - cache);
+}
+
+function computeNetworkTotals(stats: Dockerode.ContainerStats) {
+  const networks = stats.networks ?? {};
+  return Object.values(networks).reduce(
+    (totals, network) => ({
+      rx: totals.rx + (network.rx_bytes ?? 0),
+      tx: totals.tx + (network.tx_bytes ?? 0),
+    }),
+    { rx: 0, tx: 0 }
+  );
+}
+
+export async function getContainerLiveStats(id: string): Promise<ContainerLiveStats> {
+  const container = docker.getContainer(id);
+  const [inspect, stats] = await Promise.all([
+    container.inspect(),
+    container.stats({ stream: false }),
+  ]);
+
+  const memoryUsage = computeMemoryUsage(stats);
+  const memoryLimit = stats.memory_stats?.limit ?? 0;
+  const memoryPercent = memoryLimit > 0 ? roundMetric((memoryUsage / memoryLimit) * 100) : 0;
+  const network = computeNetworkTotals(stats);
+
+  return {
+    id,
+    name: inspect.Name.replace(/^\//, "") || id.substring(0, 12),
+    cpuPercent: computeCpuPercent(stats),
+    memoryUsage,
+    memoryLimit,
+    memoryPercent,
+    networkRx: network.rx,
+    networkTx: network.tx,
+    readAt: new Date().toISOString(),
+  };
 }
 
 function buildCreateContainerOptions(spec: ContainerCreateSpec): Dockerode.ContainerCreateOptions {
@@ -247,18 +332,66 @@ async function ensureImageAvailable(image: string): Promise<void> {
     // Pull below
   }
 
-  await new Promise<void>((resolve, reject) => {
-    docker.pull(image, (err: unknown, stream: NodeJS.ReadableStream | undefined) => {
-      if (err || !stream) {
-        reject(err ?? new Error("Unable to pull image"));
-        return;
-      }
-      docker.modem.followProgress(stream, (pullErr: unknown) => {
-        if (pullErr) reject(pullErr);
-        else resolve();
-      });
-    });
-  });
+  await followPullProgress(image);
+}
+
+export async function pullImage(image: string) {
+  await followPullProgress(image);
+  return docker.getImage(image).inspect();
+}
+
+function extractPortBindings(bindings: Record<string, Array<{ HostIp?: string; HostPort?: string }> | undefined> | undefined) {
+  const result: Record<string, Array<{ HostIp?: string; HostPort?: string }>> = {};
+  for (const [key, value] of Object.entries(bindings ?? {})) {
+    if (!Array.isArray(value)) continue;
+    result[key] = value.map((entry) => ({ HostIp: entry.HostIp, HostPort: entry.HostPort }));
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export async function recreateContainerWithImage(id: string, image: string) {
+  const inspect = await getContainerInspect(id);
+  const container = docker.getContainer(id);
+  const name = inspect.Name.replace(/^\//, "");
+  const shouldStart = inspect.State?.Running ?? false;
+  const networkNames = Object.keys(inspect.NetworkSettings?.Networks ?? {});
+
+  const createOptions: Dockerode.ContainerCreateOptions = {
+    name,
+    Image: image,
+    Cmd: inspect.Config?.Cmd ?? undefined,
+    Entrypoint: inspect.Config?.Entrypoint ?? undefined,
+    Env: inspect.Config?.Env ?? undefined,
+    WorkingDir: inspect.Config?.WorkingDir || undefined,
+    User: inspect.Config?.User || undefined,
+    Labels: inspect.Config?.Labels ?? undefined,
+    ExposedPorts: inspect.Config?.ExposedPorts ?? undefined,
+    HostConfig: {
+      Binds: inspect.HostConfig?.Binds ?? undefined,
+      PortBindings: extractPortBindings(inspect.HostConfig?.PortBindings),
+      RestartPolicy: inspect.HostConfig?.RestartPolicy ?? undefined,
+      NetworkMode: inspect.HostConfig?.NetworkMode || undefined,
+      Privileged: inspect.HostConfig?.Privileged ?? false,
+      AutoRemove: inspect.HostConfig?.AutoRemove ?? false,
+      CapAdd: inspect.HostConfig?.CapAdd ?? undefined,
+      CapDrop: inspect.HostConfig?.CapDrop ?? undefined,
+      ExtraHosts: inspect.HostConfig?.ExtraHosts ?? undefined,
+      PublishAllPorts: inspect.HostConfig?.PublishAllPorts ?? false,
+    },
+  };
+
+  if (shouldStart) {
+    await container.stop().catch(() => null);
+  }
+  await container.remove({ force: true });
+
+  const recreated = await docker.createContainer(createOptions);
+  await connectExtraNetworks(recreated.id, networkNames);
+  if (shouldStart) {
+    await recreated.start();
+  }
+
+  return recreated.inspect();
 }
 
 function getContainerPrimaryIp(inspect: Dockerode.ContainerInspectInfo): string {

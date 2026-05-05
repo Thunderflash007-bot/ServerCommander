@@ -107,6 +107,8 @@ SSH_HOST=""
 SSH_PORT="22"
 SSH_USERNAME=""
 SSH_PASSWORD=""
+SSH_PRIVATE_KEY=""
+SSH_KEY_PASSPHRASE=""
 SSH_SFTP_ROOT="/"
 
 if [[ "$SSH_ENABLE_INPUT" =~ ^[Yy]$ ]]; then
@@ -123,15 +125,29 @@ if [[ "$SSH_ENABLE_INPUT" =~ ^[Yy]$ ]]; then
   read -rp "  SSH username: " SSH_USERNAME
   [[ -z "$SSH_USERNAME" ]] && fatal "SSH username is required when SSH/SFTP is enabled"
 
-  while true; do
-    read -rsp "  SSH password: " SSH_PASSWORD
+  read -rp "  SSH authentication method ([k]ey/[p]assword) [k]: " SSH_AUTH_METHOD
+  SSH_AUTH_METHOD="${SSH_AUTH_METHOD:-k}"
+
+  if [[ "$SSH_AUTH_METHOD" =~ ^[Pp]$ ]]; then
+    while true; do
+      read -rsp "  SSH password: " SSH_PASSWORD
+      echo
+      if [[ -z "$SSH_PASSWORD" ]]; then
+        warn "SSH password cannot be empty. Try again."
+        continue
+      fi
+      break
+    done
+  else
+    read -rp "  Path to private key [~/.ssh/id_ed25519]: " SSH_KEY_PATH
+    SSH_KEY_PATH="${SSH_KEY_PATH:-~/.ssh/id_ed25519}"
+    SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
+    [[ -f "$SSH_KEY_PATH" ]] || fatal "SSH private key not found: $SSH_KEY_PATH"
+    SSH_PRIVATE_KEY="$(cat "$SSH_KEY_PATH")"
+
+    read -rsp "  Key passphrase (optional): " SSH_KEY_PASSPHRASE
     echo
-    if [[ -z "$SSH_PASSWORD" ]]; then
-      warn "SSH password cannot be empty. Try again."
-      continue
-    fi
-    break
-  done
+  fi
 
   read -rp "  SFTP root path [/]: " SSH_SFTP_ROOT
   SSH_SFTP_ROOT="${SSH_SFTP_ROOT:-/}"
@@ -191,10 +207,22 @@ ADMIN_PASSWORD_ENC="$(encrypt_secret_env "$ADMIN_PASSWORD")"
 ADMIN_PASSWORD_ENC_ESCAPED="$(escape_env "$ADMIN_PASSWORD_ENC")"
 
 SSH_PASSWORD_ENC=""
+SSH_PRIVATE_KEY_ENC=""
+SSH_KEY_PASSPHRASE_ENC=""
 if [[ "$SSH_ENABLED" == "true" ]]; then
-  SSH_PASSWORD_ENC="$(encrypt_secret_env "$SSH_PASSWORD")"
+  if [[ -n "$SSH_PASSWORD" ]]; then
+    SSH_PASSWORD_ENC="$(encrypt_secret_env "$SSH_PASSWORD")"
+  fi
+  if [[ -n "$SSH_PRIVATE_KEY" ]]; then
+    SSH_PRIVATE_KEY_ENC="$(encrypt_secret_env "$SSH_PRIVATE_KEY")"
+  fi
+  if [[ -n "$SSH_KEY_PASSPHRASE" ]]; then
+    SSH_KEY_PASSPHRASE_ENC="$(encrypt_secret_env "$SSH_KEY_PASSPHRASE")"
+  fi
 fi
 SSH_PASSWORD_ENC_ESCAPED="$(escape_env "$SSH_PASSWORD_ENC")"
+SSH_PRIVATE_KEY_ENC_ESCAPED="$(escape_env "$SSH_PRIVATE_KEY_ENC")"
+SSH_KEY_PASSPHRASE_ENC_ESCAPED="$(escape_env "$SSH_KEY_PASSPHRASE_ENC")"
 
 cat > "$ENV_FILE" <<EOF
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +252,8 @@ SSH_HOST="${SSH_HOST_ESCAPED}"
 SSH_PORT=${SSH_PORT}
 SSH_USERNAME="${SSH_USERNAME_ESCAPED}"
 SSH_PASSWORD_ENC="${SSH_PASSWORD_ENC_ESCAPED}"
+SSH_PRIVATE_KEY_ENC="${SSH_PRIVATE_KEY_ENC_ESCAPED}"
+SSH_KEY_PASSPHRASE_ENC="${SSH_KEY_PASSPHRASE_ENC_ESCAPED}"
 SSH_SFTP_ROOT="${SSH_SFTP_ROOT_ESCAPED}"
 
 SESSION_MAX_AGE=28800

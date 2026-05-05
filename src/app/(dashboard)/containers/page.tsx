@@ -4,6 +4,7 @@ import { canAccessDocker, canCreateContainers, filterVisibleContainerIds } from 
 import type { FullPermissions } from "@/lib/rbac";
 import { ContainerTable } from "@/components/docker/ContainerTable";
 import { ContainerCreatePanel } from "@/components/docker/ContainerCreatePanel";
+import { ContainerStatsPanel } from "@/components/docker/ContainerStatsPanel";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +53,7 @@ export default async function ContainersPage() {
         </div>
       ) : (
         <>
+          <ContainerStatsPanel title="Container Telemetry" />
           {canCreateContainers(perms) && (
             <ContainerCreatePanel
               images={imageSuggestions}

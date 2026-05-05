@@ -16,6 +16,14 @@ type Props = {
   canEdit: boolean;
 };
 
+type AutoUpdatePolicy = {
+  enabled: boolean;
+  intervalMinutes: number;
+  lastCheckedAt: string | null;
+  lastUpdatedAt: string | null;
+  lastStatus: string | null;
+};
+
 export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: Props) {
   const [name, setName] = useState(currentName);
   const [policy, setPolicy] = useState(restartPolicy || "no");
@@ -25,6 +33,13 @@ export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: 
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [forwards, setForwards] = useState<ForwardEntry[]>([]);
+  const [autoUpdate, setAutoUpdate] = useState<AutoUpdatePolicy>({
+    enabled: false,
+    intervalMinutes: 15,
+    lastCheckedAt: null,
+    lastUpdatedAt: null,
+    lastStatus: null,
+  });
 
   async function loadForwards() {
     const res = await fetch(`/api/docker/containers/${id}?type=port-forwards`, { cache: "no-store" });
@@ -34,8 +49,17 @@ export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: 
     }
   }
 
+  async function loadAutoUpdate() {
+    const res = await fetch(`/api/docker/containers/${id}?type=auto-update`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.policy) {
+      setAutoUpdate(data.policy as AutoUpdatePolicy);
+    }
+  }
+
   useEffect(() => {
     void loadForwards();
+    void loadAutoUpdate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -117,6 +141,29 @@ export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: 
     }
     setOk("Port forwarding removed");
     await loadForwards();
+  }
+
+  async function saveAutoUpdate() {
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    const res = await fetch(`/api/docker/containers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "auto-update",
+        enabled: autoUpdate.enabled,
+        intervalMinutes: autoUpdate.intervalMinutes,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) {
+      setError(data.error ?? "Auto-update configuration failed");
+      return;
+    }
+    setOk("Auto-update policy saved");
+    await loadAutoUpdate();
   }
 
   return (
@@ -221,6 +268,47 @@ export function ContainerEditPanel({ id, currentName, restartPolicy, canEdit }: 
               </div>
             ))
           )}
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border/70 p-3">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Auto-Update</h3>
+          <p className="text-xs text-muted-foreground mt-1">Watchtower-like polling that pulls the image and recreates or redeploys the container when a newer image is available.</p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-[auto_160px_auto] md:items-center">
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={autoUpdate.enabled}
+              disabled={!canEdit || busy}
+              onChange={(event) => setAutoUpdate((current) => ({ ...current, enabled: event.target.checked }))}
+            />
+            Enable auto-update for this container
+          </label>
+          <input
+            type="number"
+            min={5}
+            max={1440}
+            value={autoUpdate.intervalMinutes}
+            disabled={!canEdit || busy}
+            onChange={(event) => setAutoUpdate((current) => ({ ...current, intervalMinutes: parseInt(event.target.value, 10) || 15 }))}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <button
+            onClick={() => void saveAutoUpdate()}
+            disabled={!canEdit || busy}
+            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+          >
+            Save Policy
+          </button>
+        </div>
+
+        <div className="grid gap-2 md:grid-cols-3 text-xs text-muted-foreground">
+          <div>Last check: {autoUpdate.lastCheckedAt ? new Date(autoUpdate.lastCheckedAt).toLocaleString() : "never"}</div>
+          <div>Last update: {autoUpdate.lastUpdatedAt ? new Date(autoUpdate.lastUpdatedAt).toLocaleString() : "never"}</div>
+          <div>Status: {autoUpdate.lastStatus ?? "idle"}</div>
         </div>
       </div>
 

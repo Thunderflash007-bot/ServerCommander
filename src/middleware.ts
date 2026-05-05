@@ -1,11 +1,54 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { verifyToken } from "@/lib/auth";
+import { isCsrfProtectedMethod, isValidSameOriginRequest } from "@/lib/csrf";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login"];
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/internal/security-events", "/api/internal/auto-update"];
+
+async function logCsrfViolation(req: NextRequest) {
+  const token = req.cookies.get("sc_session")?.value;
+  const session = token ? await verifyToken(token) : null;
+  const internalAuditKey = process.env.JWT_SECRET;
+
+  if (!internalAuditKey) {
+    return;
+  }
+
+  const detail = JSON.stringify({
+    method: req.method,
+    path: req.nextUrl.pathname,
+    origin: req.headers.get("origin"),
+    referer: req.headers.get("referer"),
+    secFetchSite: req.headers.get("sec-fetch-site"),
+  });
+
+  try {
+    await fetch(new URL("/api/internal/security-events", req.url), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-internal-audit-key": internalAuditKey,
+      },
+      body: JSON.stringify({
+        event: "CSRF_BLOCKED",
+        userId: session?.userId,
+        username: session?.username,
+        role: session?.role,
+        detail,
+      }),
+    });
+  } catch (error) {
+    console.error("[middleware/csrf-log]", error);
+  }
+}
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  if (pathname.startsWith("/api/") && isCsrfProtectedMethod(req.method) && !isValidSameOriginRequest(req)) {
+    await logCsrfViolation(req);
+    return NextResponse.json({ error: "CSRF validation failed" }, { status: 403 });
+  }
 
   // Allow public paths
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {

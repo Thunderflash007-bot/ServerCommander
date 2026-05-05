@@ -4,11 +4,14 @@ import { canAccessDocker, type FullPermissions } from "@/lib/rbac";
 import {
   deleteStackFiles,
   deployStack,
+  listStackFiles,
   readStackFile,
+  readStackEntry,
   removeStack,
   restartStack,
   startStack,
   stopStack,
+  validateStack,
   writeStackFile,
 } from "@/lib/stacks";
 
@@ -33,8 +36,13 @@ export async function GET(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Invalid stack name" }, { status: 400 });
     }
 
-    const content = await readStackFile(name);
-    return NextResponse.json({ name, content });
+    const requestedFile = String(new URL(_req.url).searchParams.get("file") ?? "").trim();
+    const files = await listStackFiles(name);
+    const selectedFile = requestedFile || files[0]?.path || "docker-compose.yml";
+    const content = selectedFile === "docker-compose.yml" && files.length === 0
+      ? await readStackFile(name)
+      : await readStackEntry(name, selectedFile);
+    return NextResponse.json({ name, content, files, selectedFile });
   } catch (cause) {
     return NextResponse.json(
       { error: cause instanceof Error ? cause.message : "Failed to read stack" },
@@ -60,14 +68,26 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const body = await req.json();
     const action = String(body.action ?? "save");
+    const file = String(body.file ?? "docker-compose.yml");
 
     if (action === "save") {
-      await writeStackFile(name, String(body.content ?? ""));
+      await writeStackFile(name, String(body.content ?? ""), file);
       return NextResponse.json({ success: true });
     }
 
+    if (action === "add-file") {
+      await writeStackFile(name, String(body.content ?? ""), file);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "validate") {
+      await writeStackFile(name, String(body.content ?? await readStackEntry(name, file)), file);
+      const result = await validateStack(name);
+      return NextResponse.json({ success: true, output: result.stdout || result.stderr || "Compose file is valid" });
+    }
+
     if (action === "deploy") {
-      await writeStackFile(name, String(body.content ?? await readStackFile(name)));
+      await writeStackFile(name, String(body.content ?? await readStackEntry(name, file)), file);
       await deployStack(name);
       return NextResponse.json({ success: true });
     }
