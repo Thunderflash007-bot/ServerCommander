@@ -38,21 +38,38 @@ function StateChip({ state }: { state: string }) {
   );
 }
 
+function formatPortMappings(
+  ports: Array<{ IP?: string; PrivatePort?: number; PublicPort?: number; Type?: string }>
+): string {
+  if (!ports || ports.length === 0) return "-";
+  return ports
+    .map((port) => {
+      const proto = port.Type ?? "tcp";
+      if (port.PublicPort) {
+        const host = port.IP && port.IP !== "0.0.0.0" ? `${port.IP}:` : "";
+        return `${host}${port.PublicPort}->${port.PrivatePort}/${proto}`;
+      }
+      return `${port.PrivatePort}/${proto}`;
+    })
+    .join(", ");
+}
+
 async function doAction(id: string, action: string) {
   const res = await fetch(`/api/docker/containers/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     body: JSON.stringify({ action }),
   });
   if (!res.ok) {
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     throw new Error(data.error ?? action + " failed");
   }
 }
 
 export function ContainerTable({ containers, permissions, compact }: ContainerTableProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [actionId, setActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,6 +99,7 @@ export function ContainerTable({ containers, permissions, compact }: ContainerTa
             <tr className="border-b border-border bg-muted/30">
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Image</th>
+              {!compact && <th className="text-left px-4 py-3 font-medium text-muted-foreground">Ports</th>}
               {!compact && <th className="text-left px-4 py-3 font-medium text-muted-foreground">ID</th>}
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
               <th className="text-right px-4 py-3 font-medium text-muted-foreground">Actions</th>
@@ -89,7 +107,7 @@ export function ContainerTable({ containers, permissions, compact }: ContainerTa
           </thead>
           <tbody className="divide-y divide-border">
             {containers.map((c) => {
-              const busy = isPending && actionId?.startsWith(c.id);
+              const busy = !!actionId && actionId.startsWith(c.id);
               return (
                 <tr key={c.id} className="hover:bg-muted/20 transition">
                   <td className="px-4 py-3 font-mono font-medium text-foreground">
@@ -98,6 +116,11 @@ export function ContainerTable({ containers, permissions, compact }: ContainerTa
                   <td className="px-4 py-3 text-muted-foreground truncate max-w-[180px]">
                     {c.image}
                   </td>
+                  {!compact && (
+                    <td className="px-4 py-3 text-xs text-muted-foreground max-w-[260px] truncate" title={formatPortMappings(c.ports)}>
+                      {formatPortMappings(c.ports)}
+                    </td>
+                  )}
                   {!compact && (
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                       {c.shortId}

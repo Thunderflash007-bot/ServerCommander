@@ -48,6 +48,38 @@ export default async function ContainerInspectPage({ params }: Params) {
   const restartPolicy =
     (inspect?.HostConfig as { RestartPolicy?: { Name?: string } } | undefined)?.RestartPolicy
       ?.Name ?? "no";
+  const command = ((inspect?.Config as { Cmd?: string[] } | undefined)?.Cmd ?? []).join(" ");
+
+  const ports = Object.entries(
+    ((inspect?.NetworkSettings as { Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> } | undefined)
+      ?.Ports ?? {})
+  )
+    .map(([containerPort, bindings]) => {
+      if (!bindings || bindings.length === 0) return `${containerPort} (not published)`;
+      return bindings
+        .map((binding) => {
+          const hostIp = binding.HostIp && binding.HostIp !== "0.0.0.0" ? `${binding.HostIp}:` : "";
+          return `${hostIp}${binding.HostPort}->${containerPort}`;
+        })
+        .join(", ");
+    })
+    .filter(Boolean);
+
+  const envVars = ((inspect?.Config as { Env?: string[] } | undefined)?.Env ?? []).filter(Boolean);
+
+  const mounts = ((inspect?.Mounts as Array<{ Source?: string; Destination?: string; RW?: boolean; Type?: string }> | undefined) ?? [])
+    .map((mount) => {
+      const mode = mount.RW ? "rw" : "ro";
+      return `${mount.Source ?? ""}:${mount.Destination ?? ""} (${mount.Type ?? "bind"}, ${mode})`;
+    })
+    .filter(Boolean);
+
+  const networks = Object.entries(
+    ((inspect?.NetworkSettings as { Networks?: Record<string, { IPAddress?: string }> } | undefined)?.Networks ?? {})
+  ).map(([networkName, networkConfig]) => {
+    const ip = networkConfig?.IPAddress ? ` (${networkConfig.IPAddress})` : "";
+    return `${networkName}${ip}`;
+  });
 
   return (
     <div className="space-y-6">
@@ -98,6 +130,45 @@ export default async function ContainerInspectPage({ params }: Params) {
             restartPolicy={restartPolicy}
             canEdit={canRestartContainer(perms, id) || canDeleteContainer(perms, id)}
           />
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Port Mappings</h2>
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground font-mono break-all">
+                {ports.length === 0 ? <div>No ports exposed</div> : ports.map((port) => <div key={port}>{port}</div>)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Networks</h2>
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground font-mono break-all">
+                {networks.length === 0 ? <div>No networks attached</div> : networks.map((network) => <div key={network}>{network}</div>)}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Mounts</h2>
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground font-mono break-all">
+                {mounts.length === 0 ? <div>No mounts configured</div> : mounts.map((mount) => <div key={mount}>{mount}</div>)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Command</h2>
+              <div className="mt-2 text-xs text-muted-foreground font-mono break-all">
+                {command || "No command override"}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-4">
+            <h2 className="text-sm font-semibold text-foreground">Environment</h2>
+            <div className="mt-2 max-h-56 overflow-auto space-y-1 text-xs text-muted-foreground font-mono break-all">
+              {envVars.length === 0 ? <div>No environment variables</div> : envVars.map((entry) => <div key={entry}>{entry}</div>)}
+            </div>
+          </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Link
