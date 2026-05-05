@@ -1,11 +1,12 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { createDecipheriv } from "crypto";
 
 const prisma = new PrismaClient();
 
 async function main() {
   const adminUsername = process.env.ADMIN_USERNAME ?? "admin";
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "changeme";
+  const adminPassword = getAdminPassword();
 
   const existing = await prisma.user.findUnique({
     where: { username: adminUsername },
@@ -104,6 +105,38 @@ async function main() {
   });
 
   console.log(`[seed] Created admin user: ${admin.username} (id: ${admin.id})`);
+}
+
+function getAdminPassword(): string {
+  const encrypted = process.env.ADMIN_PASSWORD_ENC?.trim();
+  const fallback = process.env.ADMIN_PASSWORD?.trim();
+
+  if (encrypted) return decryptSecret(encrypted);
+  if (fallback) return fallback;
+  return "changeme";
+}
+
+function decryptSecret(ciphertext: string): string {
+  const keyHex = process.env.ENCRYPTION_KEY?.trim() ?? "";
+  if (!/^[0-9a-fA-F]{32}$/.test(keyHex)) {
+    throw new Error("ENCRYPTION_KEY must be 32 hex characters");
+  }
+
+  const [ivHex, dataHex] = ciphertext.split(":");
+  if (!ivHex || !dataHex || !/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(dataHex)) {
+    throw new Error("Invalid ADMIN_PASSWORD_ENC format");
+  }
+
+  const decipher = createDecipheriv(
+    "aes-256-ctr",
+    Buffer.from(keyHex, "hex"),
+    Buffer.from(ivHex, "hex")
+  );
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(dataHex, "hex")),
+    decipher.final(),
+  ]);
+  return decrypted.toString("utf-8");
 }
 
 main()
