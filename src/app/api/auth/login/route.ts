@@ -19,7 +19,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    const valid = await bcrypt.compare(password, user.passwordHash);
+    const storedHash = user.passwordHash ?? "";
+    const looksLikeBcrypt = /^\$2[aby]\$\d{2}\$/.test(storedHash);
+
+    const valid = looksLikeBcrypt
+      ? await bcrypt.compare(password, storedHash)
+      : password === storedHash;
+
+    // Legacy migration: if an old plaintext password is still in DB,
+    // upgrade it to bcrypt immediately after successful login.
+    if (valid && !looksLikeBcrypt) {
+      const migratedHash = await bcrypt.hash(password, 12);
+      await db.user.update({
+        where: { id: user.id },
+        data: { passwordHash: migratedHash },
+      });
+    }
+
     if (!valid) {
       await writeAuditLog(null, "LOGIN_FAILED", "auth", `User: ${username}`, false, req);
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });

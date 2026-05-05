@@ -6,6 +6,7 @@ import pty from "node-pty";
 import { Client as SSHClient } from "ssh2";
 import { jwtVerify } from "jose";
 import { PrismaClient } from "@prisma/client";
+import { createDecipheriv } from "crypto";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
@@ -56,14 +57,47 @@ function isSshBackendEnabled() {
 function getSshRuntimeConfig() {
   const host = process.env.SSH_HOST?.trim();
   const username = process.env.SSH_USERNAME?.trim();
-  const password = process.env.SSH_PASSWORD ?? "";
+  const password = getSshPassword();
   const port = Number(process.env.SSH_PORT ?? "22");
 
   if (!host || !username || !password) {
-    throw new Error("SSH backend is enabled but SSH_HOST/SSH_USERNAME/SSH_PASSWORD are missing");
+    throw new Error("SSH backend is enabled but SSH_HOST/SSH_USERNAME/SSH_PASSWORD_ENC are missing");
   }
 
   return { host, username, password, port };
+}
+
+function getSshPassword() {
+  const encryptedPassword = process.env.SSH_PASSWORD_ENC?.trim();
+  const fallbackPassword = process.env.SSH_PASSWORD?.trim();
+
+  if (encryptedPassword) {
+    return decryptSecret(encryptedPassword);
+  }
+  return fallbackPassword ?? "";
+}
+
+function decryptSecret(ciphertext) {
+  const keyHex = (process.env.ENCRYPTION_KEY ?? "").trim();
+  if (!/^[0-9a-fA-F]{32}$/.test(keyHex)) {
+    throw new Error("ENCRYPTION_KEY must be 32 hex characters");
+  }
+
+  const [ivHex, dataHex] = ciphertext.split(":");
+  if (!ivHex || !dataHex || !/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(dataHex)) {
+    throw new Error("Invalid SSH_PASSWORD_ENC format");
+  }
+
+  const decipher = createDecipheriv(
+    "aes-256-ctr",
+    Buffer.from(keyHex, "hex"),
+    Buffer.from(ivHex, "hex")
+  );
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(dataHex, "hex")),
+    decipher.final(),
+  ]);
+  return decrypted.toString("utf-8");
 }
 
 async function verifySessionToken(token) {

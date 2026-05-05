@@ -1,5 +1,6 @@
 import SftpClient from "ssh2-sftp-client";
 import path from "path";
+import { createDecipheriv } from "crypto";
 
 export type RemoteFileStat = {
   isDirectory: boolean;
@@ -20,12 +21,50 @@ function getRequiredEnv(name: string): string {
 }
 
 export function getSshConfig() {
+  const encryptedPassword = process.env.SSH_PASSWORD_ENC?.trim();
+  const fallbackPassword = process.env.SSH_PASSWORD?.trim();
+
+  let password = "";
+  if (encryptedPassword) {
+    password = decryptSecret(encryptedPassword);
+  } else if (fallbackPassword) {
+    // Backward compatibility for older .env files.
+    password = fallbackPassword;
+  }
+
+  if (!password) {
+    throw new Error("Missing SSH password. Set SSH_PASSWORD_ENC (preferred) or SSH_PASSWORD");
+  }
+
   return {
     host: getRequiredEnv("SSH_HOST"),
     port: Number(process.env.SSH_PORT ?? "22"),
     username: getRequiredEnv("SSH_USERNAME"),
-    password: getRequiredEnv("SSH_PASSWORD"),
+    password,
   };
+}
+
+function decryptSecret(ciphertext: string): string {
+  const keyHex = process.env.ENCRYPTION_KEY?.trim() ?? "";
+  if (!/^[0-9a-fA-F]{32}$/.test(keyHex)) {
+    throw new Error("ENCRYPTION_KEY must be 32 hex characters");
+  }
+
+  const [ivHex, dataHex] = ciphertext.split(":");
+  if (!ivHex || !dataHex || !/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(dataHex)) {
+    throw new Error("Invalid SSH_PASSWORD_ENC format");
+  }
+
+  const decipher = createDecipheriv(
+    "aes-256-ctr",
+    Buffer.from(keyHex, "hex"),
+    Buffer.from(ivHex, "hex")
+  );
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(dataHex, "hex")),
+    decipher.final(),
+  ]);
+  return decrypted.toString("utf-8");
 }
 
 function getSftpRoot(): string {

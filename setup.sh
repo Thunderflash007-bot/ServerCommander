@@ -168,12 +168,31 @@ escape_env() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+encrypt_secret_env() {
+  local plaintext="$1"
+  local iv
+  local cipher_hex
+
+  if ! command -v openssl &>/dev/null; then
+    fatal "'openssl' is required to encrypt SSH password for .env storage"
+  fi
+
+  iv="$(head -c 16 /dev/urandom | xxd -p | tr -d '\n')"
+  cipher_hex="$(printf '%s' "$plaintext" | openssl enc -aes-256-ctr -K "$ENCRYPTION_KEY" -iv "$iv" -nosalt -e | xxd -p -c 9999 | tr -d '\n')"
+  printf '%s:%s' "$iv" "$cipher_hex"
+}
+
 ADMIN_USERNAME_ESCAPED="$(escape_env "$ADMIN_USERNAME")"
 ADMIN_PASSWORD_ESCAPED="$(escape_env "$ADMIN_PASSWORD")"
 SSH_HOST_ESCAPED="$(escape_env "$SSH_HOST")"
 SSH_USERNAME_ESCAPED="$(escape_env "$SSH_USERNAME")"
-SSH_PASSWORD_ESCAPED="$(escape_env "$SSH_PASSWORD")"
 SSH_SFTP_ROOT_ESCAPED="$(escape_env "$SSH_SFTP_ROOT")"
+
+SSH_PASSWORD_ENC=""
+if [[ "$SSH_ENABLED" == "true" ]]; then
+  SSH_PASSWORD_ENC="$(encrypt_secret_env "$SSH_PASSWORD")"
+fi
+SSH_PASSWORD_ENC_ESCAPED="$(escape_env "$SSH_PASSWORD_ENC")"
 
 cat > "$ENV_FILE" <<EOF
 # ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +221,7 @@ SSH_ENABLED=${SSH_ENABLED}
 SSH_HOST="${SSH_HOST_ESCAPED}"
 SSH_PORT=${SSH_PORT}
 SSH_USERNAME="${SSH_USERNAME_ESCAPED}"
-SSH_PASSWORD="${SSH_PASSWORD_ESCAPED}"
+SSH_PASSWORD_ENC="${SSH_PASSWORD_ENC_ESCAPED}"
 SSH_SFTP_ROOT="${SSH_SFTP_ROOT_ESCAPED}"
 
 SESSION_MAX_AGE=28800

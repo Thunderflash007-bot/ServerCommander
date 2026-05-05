@@ -19,6 +19,19 @@ async function main() {
   });
 
   if (existing) {
+    const looksLikeBcrypt = /^\$2[aby]\$\d{2}\$/.test(existing.passwordHash ?? "");
+    if (!looksLikeBcrypt) {
+      const migratedHash = await bcrypt.hash(adminPassword, 12);
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash: migratedHash,
+          mustChangePassword: false,
+        },
+      });
+      console.log(`[seed] Migrated admin password to bcrypt hash for "${adminUsername}".`);
+    }
+
     if (existing.permissions) {
       await prisma.userPermission.update({
         where: { id: existing.permissions.id },
