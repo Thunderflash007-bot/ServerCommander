@@ -118,8 +118,8 @@ function getAdminPassword(): string {
 
 function decryptSecret(ciphertext: string): string {
   const keyHex = process.env.ENCRYPTION_KEY?.trim() ?? "";
-  if (!/^[0-9a-fA-F]{32}$/.test(keyHex)) {
-    throw new Error("ENCRYPTION_KEY must be 32 hex characters");
+  if (!/^[0-9a-fA-F]{32}$/.test(keyHex) && !/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+    throw new Error("ENCRYPTION_KEY must be 32 or 64 hex characters");
   }
 
   const [ivHex, dataHex] = ciphertext.split(":");
@@ -127,9 +127,10 @@ function decryptSecret(ciphertext: string): string {
     throw new Error("Invalid ADMIN_PASSWORD_ENC format");
   }
 
+  const normalizedKeyHex = keyHex.padEnd(64, "0");
   const decipher = createDecipheriv(
     "aes-256-ctr",
-    Buffer.from(keyHex, "hex"),
+    Buffer.from(normalizedKeyHex, "hex"),
     Buffer.from(ivHex, "hex")
   );
   const decrypted = Buffer.concat([

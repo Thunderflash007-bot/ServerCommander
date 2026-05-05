@@ -147,11 +147,11 @@ gen_hex() { head -c "$1" /dev/urandom | xxd -p | tr -d '\n' | cut -c1-"$((2 * $1
 
 SESSION_SECRET="$(gen_hex 32)"
 JWT_SECRET="$(gen_hex 32)"
-ENCRYPTION_KEY="$(gen_hex 16)"
+ENCRYPTION_KEY="$(gen_hex 32)"
 
 success "SESSION_SECRET generated (64-char hex)"
 success "JWT_SECRET generated (64-char hex)"
-success "ENCRYPTION_KEY generated (32-char hex)"
+success "ENCRYPTION_KEY generated (64-char hex)"
 
 # ── Write .env File ───────────────────────────────────────────────────────────
 header "Writing .env"
