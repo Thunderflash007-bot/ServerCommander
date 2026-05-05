@@ -25,6 +25,17 @@ export async function GET(_req: NextRequest, { params }: Params) {
           fsPathPerms: true,
         },
       },
+      permissionGroups: {
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -43,7 +54,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (currentUser.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { displayName, isActive, password, permissions } = body;
+  const { displayName, isActive, password, permissions, permissionGroupIds } = body;
 
   // Update base user fields
   const updateData: Record<string, unknown> = {};
@@ -66,6 +77,30 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       update: globalPerms,
       create: { userId: id, ...globalPerms },
     });
+  }
+
+  if (Array.isArray(permissionGroupIds)) {
+    const normalizedIds = Array.from(new Set(permissionGroupIds.map((value: unknown) => String(value)).filter(Boolean)));
+
+    const existing = await db.permissionGroup.findMany({
+      where: { id: { in: normalizedIds } },
+      select: { id: true },
+    });
+
+    if (existing.length !== normalizedIds.length) {
+      return NextResponse.json({ error: "One or more permission groups do not exist" }, { status: 400 });
+    }
+
+    await db.$transaction([
+      db.userPermissionGroup.deleteMany({ where: { userId: id } }),
+      ...(normalizedIds.length > 0
+        ? [
+            db.userPermissionGroup.createMany({
+              data: normalizedIds.map((groupId) => ({ userId: id, groupId })),
+            }),
+          ]
+        : []),
+    ]);
   }
 
   await writeAuditLog(

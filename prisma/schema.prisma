@@ -27,6 +27,7 @@ model User {
 
   sessions    Session[]
   permissions UserPermission?
+  permissionGroups UserPermissionGroup[]
   auditLogs   AuditLog[]
 }
 
@@ -83,6 +84,46 @@ model UserPermission {
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   containerPerms  ContainerPermission[]
   fsPathPerms     FsPathPermission[]
+}
+
+// ── Permission Groups ────────────────────────────────────────────────────────
+
+model PermissionGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+
+  dockerAccess   Boolean @default(false)
+  dockerViewAll  Boolean @default(false)
+  dockerImages   Boolean @default(false)
+  dockerVolumes  Boolean @default(false)
+  dockerNetworks Boolean @default(false)
+  dockerCreate   Boolean @default(false)
+  dockerDelete   Boolean @default(false)
+  fsAccess       Boolean @default(false)
+  terminalAccess Boolean @default(false)
+  terminalReadOnly Boolean @default(true)
+  terminalMaxSessions Int @default(1)
+
+  userAssignments UserPermissionGroup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserPermissionGroup {
+  id      String @id @default(cuid())
+  userId  String
+  groupId String
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group PermissionGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
 }
 
 // ── Per-Container Permission (whitelist entry) ────────────────────────────────

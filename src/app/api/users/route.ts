@@ -27,6 +27,16 @@ export async function GET() {
           containerPerms: { select: { containerName: true, containerId: true } },
         },
       },
+      permissionGroups: {
+        select: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
     },
     orderBy: { createdAt: "asc" },
   });

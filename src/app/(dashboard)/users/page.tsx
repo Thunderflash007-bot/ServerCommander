@@ -26,8 +26,35 @@ export default async function UsersPage() {
           containerPerms: { select: { containerName: true, containerId: true } },
         },
       },
+      permissionGroups: {
+        select: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
     },
     orderBy: { createdAt: "asc" },
+  });
+
+  const groups = await db.permissionGroup.findMany({
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      dockerAccess: true,
+      fsAccess: true,
+      terminalAccess: true,
+      _count: {
+        select: {
+          userAssignments: true,
+        },
+      },
+    },
+    orderBy: { name: "asc" },
   });
 
   return (
@@ -36,7 +63,7 @@ export default async function UsersPage() {
         <h1 className="text-2xl font-bold tracking-tight">User Management</h1>
         <p className="text-muted-foreground text-sm mt-1">{users.length} user(s) configured</p>
       </div>
-      <UsersTable users={users} currentUserId={user.id} />
+      <UsersTable users={users} groups={groups} currentUserId={user.id} />
     </div>
   );
 }

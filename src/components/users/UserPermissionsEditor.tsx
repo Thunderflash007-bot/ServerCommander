@@ -48,8 +48,23 @@ interface UserPermissionsEditorProps {
     displayName: string | null;
     isActive: boolean;
     permissions: Permissions | null;
+    permissionGroups: Array<{
+      group: {
+        id: string;
+        name: string;
+        description: string | null;
+      };
+    }>;
   };
   containers: ContainerSummary[];
+  groups: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    dockerAccess: boolean;
+    fsAccess: boolean;
+    terminalAccess: boolean;
+  }>;
 }
 
 function emptyPerms(): Permissions {
@@ -62,9 +77,12 @@ function emptyPerms(): Permissions {
   };
 }
 
-export function UserPermissionsEditor({ user, containers }: UserPermissionsEditorProps) {
+export function UserPermissionsEditor({ user, containers, groups }: UserPermissionsEditorProps) {
   const router = useRouter();
   const [perms, setPerms] = useState<Permissions>(user.permissions ?? emptyPerms());
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(
+    user.permissionGroups.map((entry) => entry.group.id)
+  );
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [newPath, setNewPath] = useState("");
@@ -128,6 +146,14 @@ export function UserPermissionsEditor({ user, containers }: UserPermissionsEdito
     }));
   }
 
+  function toggleGroup(groupId: string) {
+    setSelectedGroupIds((current) =>
+      current.includes(groupId)
+        ? current.filter((id) => id !== groupId)
+        : [...current, groupId]
+    );
+  }
+
   // ── Save ─────────────────────────────────────────────────────────────────────
 
   async function handleSave() {
@@ -140,7 +166,7 @@ export function UserPermissionsEditor({ user, containers }: UserPermissionsEdito
     const r1 = await fetch(`/api/users/${user.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ permissions: globalPerms }),
+      body: JSON.stringify({ permissions: globalPerms, permissionGroupIds: selectedGroupIds }),
     });
 
     // 2. Update container whitelist
@@ -195,6 +221,39 @@ export function UserPermissionsEditor({ user, containers }: UserPermissionsEdito
       )}
 
       {/* ── Section: Docker Global ─────────────────────────────────────────── */}
+      <Section icon={<ShieldCheck className="w-4 h-4" />} title="Permission Groups">
+        {groups.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No groups created yet. Create one in User Management first.</p>
+        ) : (
+          <div className="space-y-2">
+            {groups.map((group) => {
+              const checked = selectedGroupIds.includes(group.id);
+              return (
+                <label key={group.id} className="flex items-start gap-3 rounded-lg border border-border bg-muted/10 p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleGroup(group.id)}
+                    className="mt-1 rounded border-border"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium">{group.name}</div>
+                    {group.description && (
+                      <div className="text-xs text-muted-foreground mt-0.5">{group.description}</div>
+                    )}
+                    <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                      {group.dockerAccess && <span>Docker</span>}
+                      {group.fsAccess && <span>Filesystem</span>}
+                      {group.terminalAccess && <span>Terminal</span>}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+
       <Section icon={<ShieldCheck className="w-4 h-4" />} title="Docker — Global Permissions">
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {([

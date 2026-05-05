@@ -20,6 +20,19 @@ type Params = { params: Promise<{ id: string }> };
 
 export const dynamic = "force-dynamic";
 
+function getProp<T = unknown>(obj: Record<string, unknown> | null, ...keys: string[]): T | undefined {
+  if (!obj) return undefined;
+  for (const key of keys) {
+    if (key in obj) return obj[key] as T;
+  }
+  const lowerMap = new Map<string, unknown>(Object.entries(obj).map(([key, value]) => [key.toLowerCase(), value]));
+  for (const key of keys) {
+    const value = lowerMap.get(key.toLowerCase());
+    if (value !== undefined) return value as T;
+  }
+  return undefined;
+}
+
 export default async function ContainerInspectPage({ params }: Params) {
   const { id } = await params;
   const user = await getCurrentUser();
@@ -39,21 +52,35 @@ export default async function ContainerInspectPage({ params }: Params) {
     error = cause instanceof Error ? cause.message : "Failed to inspect container";
   }
 
-  const state = (inspect?.State as { Running?: boolean; Status?: string } | undefined) ?? {};
-  const name =
-    typeof inspect?.Name === "string"
-      ? inspect.Name.replace(/^\//, "")
-      : id.substring(0, 12);
-  const image = (inspect?.Config as { Image?: string } | undefined)?.Image ?? "unknown";
-  const restartPolicy =
-    (inspect?.HostConfig as { RestartPolicy?: { Name?: string } } | undefined)?.RestartPolicy
-      ?.Name ?? "no";
-  const command = ((inspect?.Config as { Cmd?: string[] } | undefined)?.Cmd ?? []).join(" ");
+  const stateObj = (getProp<Record<string, unknown>>(inspect, "State", "state") ?? {}) as Record<string, unknown>;
+  const state = {
+    Running: Boolean(getProp<boolean>(stateObj, "Running", "running") ?? false),
+    Status: String(getProp<string>(stateObj, "Status", "status") ?? "unknown"),
+  };
 
-  const ports = Object.entries(
-    ((inspect?.NetworkSettings as { Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> } | undefined)
-      ?.Ports ?? {})
-  )
+  const configObj = (getProp<Record<string, unknown>>(inspect, "Config", "config") ?? {}) as Record<string, unknown>;
+  const hostConfigObj = (getProp<Record<string, unknown>>(inspect, "HostConfig", "hostConfig") ?? {}) as Record<string, unknown>;
+  const networkSettingsObj =
+    (getProp<Record<string, unknown>>(inspect, "NetworkSettings", "networkSettings") ?? {}) as Record<string, unknown>;
+
+  const rawName = getProp<string>(inspect, "Name", "name");
+  const name = rawName ? rawName.replace(/^\//, "") : id.substring(0, 12);
+  const image = getProp<string>(configObj, "Image", "image") ?? "unknown";
+
+  const restartPolicyObj =
+    (getProp<Record<string, unknown>>(hostConfigObj, "RestartPolicy", "restartPolicy") ?? {}) as Record<string, unknown>;
+  const restartPolicy = getProp<string>(restartPolicyObj, "Name", "name") ?? "no";
+
+  const cmdValue = getProp<unknown>(configObj, "Cmd", "cmd");
+  const command = Array.isArray(cmdValue)
+    ? cmdValue.map((entry) => String(entry)).join(" ")
+    : cmdValue
+      ? String(cmdValue)
+      : "";
+
+  const portsObj =
+    (getProp<Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>>(networkSettingsObj, "Ports", "ports") ?? {});
+  const ports = Object.entries(portsObj)
     .map(([containerPort, bindings]) => {
       if (!bindings || bindings.length === 0) return `${containerPort} (not published)`;
       return bindings
@@ -65,18 +92,21 @@ export default async function ContainerInspectPage({ params }: Params) {
     })
     .filter(Boolean);
 
-  const envVars = ((inspect?.Config as { Env?: string[] } | undefined)?.Env ?? []).filter(Boolean);
+  const envValue = getProp<unknown>(configObj, "Env", "env");
+  const envVars = Array.isArray(envValue) ? envValue.map((entry) => String(entry)).filter(Boolean) : [];
 
-  const mounts = ((inspect?.Mounts as Array<{ Source?: string; Destination?: string; RW?: boolean; Type?: string }> | undefined) ?? [])
+  const mountsValue =
+    (getProp<Array<{ Source?: string; Destination?: string; RW?: boolean; Type?: string }>>(inspect, "Mounts", "mounts") ?? []);
+  const mounts = mountsValue
     .map((mount) => {
       const mode = mount.RW ? "rw" : "ro";
       return `${mount.Source ?? ""}:${mount.Destination ?? ""} (${mount.Type ?? "bind"}, ${mode})`;
     })
     .filter(Boolean);
 
-  const networks = Object.entries(
-    ((inspect?.NetworkSettings as { Networks?: Record<string, { IPAddress?: string }> } | undefined)?.Networks ?? {})
-  ).map(([networkName, networkConfig]) => {
+  const networksObj =
+    (getProp<Record<string, { IPAddress?: string }>>(networkSettingsObj, "Networks", "networks") ?? {});
+  const networks = Object.entries(networksObj).map(([networkName, networkConfig]) => {
     const ip = networkConfig?.IPAddress ? ` (${networkConfig.IPAddress})` : "";
     return `${networkName}${ip}`;
   });

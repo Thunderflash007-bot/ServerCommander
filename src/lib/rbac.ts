@@ -1,6 +1,19 @@
-import type { UserPermission, ContainerPermission, FsPathPermission } from "@prisma/client";
+import type { ContainerPermission, FsPathPermission } from "@prisma/client";
 
-export type FullPermissions = UserPermission & {
+export type FullPermissions = {
+  id: string;
+  userId: string;
+  dockerAccess: boolean;
+  dockerViewAll: boolean;
+  dockerImages: boolean;
+  dockerVolumes: boolean;
+  dockerNetworks: boolean;
+  dockerCreate: boolean;
+  dockerDelete: boolean;
+  fsAccess: boolean;
+  terminalAccess: boolean;
+  terminalReadOnly: boolean;
+  terminalMaxSessions: number;
   containerPerms: ContainerPermission[];
   fsPathPerms: FsPathPermission[];
 };

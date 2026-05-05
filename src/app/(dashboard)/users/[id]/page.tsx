@@ -23,6 +23,11 @@ export default async function UserDetailPage({ params }: Params) {
           fsPathPerms: true,
         },
       },
+      permissionGroups: {
+        include: {
+          group: true,
+        },
+      },
     },
   });
 
@@ -36,6 +41,17 @@ export default async function UserDetailPage({ params }: Params) {
   }
 
   const { passwordHash: _, ...safeUser } = targetUser;
+  const groups = await db.permissionGroup.findMany({
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      dockerAccess: true,
+      fsAccess: true,
+      terminalAccess: true,
+    },
+    orderBy: { name: "asc" },
+  });
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -43,7 +59,7 @@ export default async function UserDetailPage({ params }: Params) {
         <h1 className="text-2xl font-bold tracking-tight">Edit User: {targetUser.username}</h1>
         <p className="text-muted-foreground text-sm mt-1">Configure granular permissions for this user.</p>
       </div>
-      <UserPermissionsEditor user={safeUser} containers={containers} />
+      <UserPermissionsEditor user={safeUser} containers={containers} groups={groups} />
     </div>
   );
 }

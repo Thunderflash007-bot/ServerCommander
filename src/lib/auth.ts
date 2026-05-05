@@ -38,6 +38,20 @@ type CurrentUser = {
   permissions: Awaited<ReturnType<typeof getUserPermissions>>;
 };
 
+type MergedPermissionGroup = {
+  dockerAccess: boolean;
+  dockerViewAll: boolean;
+  dockerImages: boolean;
+  dockerVolumes: boolean;
+  dockerNetworks: boolean;
+  dockerCreate: boolean;
+  dockerDelete: boolean;
+  fsAccess: boolean;
+  terminalAccess: boolean;
+  terminalReadOnly: boolean;
+  terminalMaxSessions: number;
+};
+
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
 export async function signToken(payload: SessionPayload): Promise<string> {
@@ -155,11 +169,51 @@ export async function getCurrentUser(): Promise<
 }
 
 export async function getUserPermissions(userId: string) {
-  return db.userPermission.findUnique({
-    where: { userId },
+  const user = await db.user.findUnique({
+    where: { id: userId },
     include: {
-      containerPerms: true,
-      fsPathPerms: true,
+      permissions: {
+        include: {
+          containerPerms: true,
+          fsPathPerms: true,
+        },
+      },
+      permissionGroups: {
+        include: {
+          group: true,
+        },
+      },
     },
   });
+
+  if (!user) return null;
+
+  const manual = user.permissions;
+  const rawGroups = ((user as unknown as {
+    permissionGroups?: Array<{ group: MergedPermissionGroup }>;
+  }).permissionGroups ?? []);
+  const groups: MergedPermissionGroup[] = rawGroups.map((entry) => entry.group);
+  if (!manual && groups.length === 0) return null;
+
+  return {
+    id: manual?.id ?? `group-only-${userId}`,
+    userId,
+    dockerAccess: (manual?.dockerAccess ?? false) || groups.some((g) => g.dockerAccess),
+    dockerViewAll: (manual?.dockerViewAll ?? false) || groups.some((g) => g.dockerViewAll),
+    dockerImages: (manual?.dockerImages ?? false) || groups.some((g) => g.dockerImages),
+    dockerVolumes: (manual?.dockerVolumes ?? false) || groups.some((g) => g.dockerVolumes),
+    dockerNetworks: (manual?.dockerNetworks ?? false) || groups.some((g) => g.dockerNetworks),
+    dockerCreate: (manual?.dockerCreate ?? false) || groups.some((g) => g.dockerCreate),
+    dockerDelete: (manual?.dockerDelete ?? false) || groups.some((g) => g.dockerDelete),
+    fsAccess: (manual?.fsAccess ?? false) || groups.some((g) => g.fsAccess),
+    terminalAccess: (manual?.terminalAccess ?? false) || groups.some((g) => g.terminalAccess),
+    terminalReadOnly:
+      (manual?.terminalReadOnly ?? true) && groups.every((g) => g.terminalReadOnly),
+    terminalMaxSessions: Math.max(
+      manual?.terminalMaxSessions ?? 1,
+      ...groups.map((g) => g.terminalMaxSessions)
+    ),
+    containerPerms: manual?.containerPerms ?? [],
+    fsPathPerms: manual?.fsPathPerms ?? [],
+  };
 }
