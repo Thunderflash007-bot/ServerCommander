@@ -55,8 +55,8 @@ export async function PATCH(req: NextRequest) {
 
   const existing = await db.smtpSettings.findUnique({ where: { id: "default" } });
 
-  const passwordEnc = password?.trim()
-    ? encryptSecret(password.trim())
+  const passwordEnc = typeof password === "string" && password.length > 0
+    ? encryptSecret(password)
     : existing?.passwordEnc ?? null;
 
   const smtp = await db.smtpSettings.upsert({
