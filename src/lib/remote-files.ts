@@ -1,6 +1,7 @@
 import SftpClient from "ssh2-sftp-client";
 import path from "path";
-import { createDecipheriv } from "crypto";
+import { db } from "@/lib/db";
+import { decryptSecret } from "@/lib/secrets";
 
 export type RemoteFileStat = {
   isDirectory: boolean;
@@ -8,83 +9,94 @@ export type RemoteFileStat = {
   modified: Date;
 };
 
-export function isSshBackendEnabled(): boolean {
-  return String(process.env.SSH_ENABLED ?? "false").toLowerCase() === "true";
-}
+type SshBackendSettings = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  passwordEnc: string;
+  privateKeyEnc: string;
+  keyPassphraseEnc: string;
+  sftpRoot: string;
+};
 
-function getRequiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing environment variable: ${name}`);
+async function loadSshBackendSettings(): Promise<SshBackendSettings> {
+  const settings = await db.sshSettings.findUnique({ where: { id: "default" } });
+  if (settings) {
+    return {
+      enabled: !!settings.enabled,
+      host: settings.host?.trim() ?? "",
+      port: Number(settings.port ?? 22),
+      username: settings.username?.trim() ?? "",
+      passwordEnc: settings.passwordEnc?.trim() ?? "",
+      privateKeyEnc: settings.privateKeyEnc?.trim() ?? "",
+      keyPassphraseEnc: settings.keyPassphraseEnc?.trim() ?? "",
+      sftpRoot: settings.sftpRoot?.trim() || "/",
+    };
   }
-  return value;
+
+  return {
+    enabled: String(process.env.SSH_ENABLED ?? "false").toLowerCase() === "true",
+    host: process.env.SSH_HOST?.trim() ?? "",
+    port: Number(process.env.SSH_PORT ?? "22"),
+    username: process.env.SSH_USERNAME?.trim() ?? "",
+    passwordEnc: process.env.SSH_PASSWORD_ENC?.trim() ?? "",
+    privateKeyEnc: process.env.SSH_PRIVATE_KEY_ENC?.trim() ?? "",
+    keyPassphraseEnc: process.env.SSH_KEY_PASSPHRASE_ENC?.trim() ?? "",
+    sftpRoot: process.env.SSH_SFTP_ROOT?.trim() || "/",
+  };
 }
 
-export function getSshConfig() {
-  const privateKeyEnc = process.env.SSH_PRIVATE_KEY_ENC?.trim();
-  const privateKeyPassphraseEnc = process.env.SSH_KEY_PASSPHRASE_ENC?.trim();
-  const encryptedPassword = process.env.SSH_PASSWORD_ENC?.trim();
+function getRequiredSetting(value: string, name: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`Missing SSH setting: ${name}`);
+  }
+  return normalized;
+}
+
+export async function isSshBackendEnabled(): Promise<boolean> {
+  const settings = await loadSshBackendSettings();
+  return settings.enabled;
+}
+
+export async function getSshConfig() {
+  const settings = await loadSshBackendSettings();
   const fallbackPassword = process.env.SSH_PASSWORD?.trim();
 
+  const privateKey = settings.privateKeyEnc ? decryptSecret(settings.privateKeyEnc) : "";
+  const passphrase = settings.keyPassphraseEnc ? decryptSecret(settings.keyPassphraseEnc) : "";
+
   let password = "";
-  let privateKey = "";
-  let passphrase = "";
-
-  if (privateKeyEnc) {
-    privateKey = decryptSecret(privateKeyEnc);
-  }
-
-  if (privateKeyPassphraseEnc) {
-    passphrase = decryptSecret(privateKeyPassphraseEnc);
-  }
-
-  if (encryptedPassword) {
-    password = decryptSecret(encryptedPassword);
+  if (settings.passwordEnc) {
+    password = decryptSecret(settings.passwordEnc);
   } else if (fallbackPassword) {
     // Backward compatibility for older .env files.
     password = fallbackPassword;
   }
 
   if (!privateKey && !password) {
-    throw new Error("Missing SSH credentials. Set SSH_PRIVATE_KEY_ENC or SSH_PASSWORD_ENC/SSH_PASSWORD");
+    throw new Error("Missing SSH credentials. Set private key or password in SSH settings");
+  }
+
+  const port = Number(settings.port || 22);
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    throw new Error("SSH port must be between 1 and 65535");
   }
 
   return {
-    host: getRequiredEnv("SSH_HOST"),
-    port: Number(process.env.SSH_PORT ?? "22"),
-    username: getRequiredEnv("SSH_USERNAME"),
+    host: getRequiredSetting(settings.host, "host"),
+    port,
+    username: getRequiredSetting(settings.username, "username"),
     password: privateKey ? undefined : password,
     privateKey: privateKey || undefined,
     passphrase: privateKey ? passphrase || undefined : undefined,
   };
 }
 
-function decryptSecret(ciphertext: string): string {
-  const keyHex = process.env.ENCRYPTION_KEY?.trim() ?? "";
-  if (!/^[0-9a-fA-F]{32}$/.test(keyHex) && !/^[0-9a-fA-F]{64}$/.test(keyHex)) {
-    throw new Error("ENCRYPTION_KEY must be 32 or 64 hex characters");
-  }
-
-  const [ivHex, dataHex] = ciphertext.split(":");
-  if (!ivHex || !dataHex || !/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(dataHex)) {
-    throw new Error("Invalid SSH_PASSWORD_ENC format");
-  }
-
-  const normalizedKeyHex = keyHex.padEnd(64, "0");
-  const decipher = createDecipheriv(
-    "aes-256-ctr",
-    Buffer.from(normalizedKeyHex, "hex"),
-    Buffer.from(ivHex, "hex")
-  );
-  const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(dataHex, "hex")),
-    decipher.final(),
-  ]);
-  return decrypted.toString("utf-8");
-}
-
-function getSftpRoot(): string {
-  const root = process.env.SSH_SFTP_ROOT?.trim() || "/";
+async function getSftpRoot(): Promise<string> {
+  const settings = await loadSshBackendSettings();
+  const root = settings.sftpRoot || "/";
   const normalized = path.posix.normalize(root);
   return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
@@ -95,8 +107,8 @@ export function normalizeVirtualPath(requestedPath: string): string {
   return withSlash === "" ? "/" : withSlash;
 }
 
-export function resolveRemotePath(virtualPath: string): string {
-  const root = getSftpRoot();
+export async function resolveRemotePath(virtualPath: string): Promise<string> {
+  const root = await getSftpRoot();
   const normalizedVirtual = normalizeVirtualPath(virtualPath);
   const joined = path.posix.normalize(path.posix.join(root, normalizedVirtual));
 
@@ -110,7 +122,7 @@ export function resolveRemotePath(virtualPath: string): string {
 export async function withSftpClient<T>(fn: (client: SftpClient) => Promise<T>): Promise<T> {
   const client = new SftpClient();
   try {
-    await client.connect(getSshConfig());
+    await client.connect(await getSshConfig());
     return await fn(client);
   } finally {
     await client.end().catch(() => undefined);

@@ -51,27 +51,32 @@ function readCookie(name, cookieHeader = "") {
   return null;
 }
 
-function isSshBackendEnabled() {
-  return String(process.env.SSH_ENABLED ?? "false").toLowerCase() === "true";
-}
-
-function getSshRuntimeConfig() {
-  const host = process.env.SSH_HOST?.trim();
-  const username = process.env.SSH_USERNAME?.trim();
-  const password = getSshPassword();
-  const privateKey = getSshPrivateKey();
-  const passphrase = getSshKeyPassphrase();
-  const port = Number(process.env.SSH_PORT ?? "22");
-
-  if (!host || !username || (!password && !privateKey)) {
-    throw new Error("SSH backend is enabled but SSH_HOST/SSH_USERNAME and SSH_PRIVATE_KEY_ENC or SSH_PASSWORD_ENC are required");
+async function loadSshRuntimeSettings() {
+  const dbSettings = await prisma.sshSettings.findUnique({ where: { id: "default" } });
+  if (dbSettings) {
+    return {
+      enabled: !!dbSettings.enabled,
+      host: dbSettings.host?.trim() ?? "",
+      username: dbSettings.username?.trim() ?? "",
+      port: Number(dbSettings.port ?? 22),
+      passwordEnc: dbSettings.passwordEnc?.trim() ?? "",
+      privateKeyEnc: dbSettings.privateKeyEnc?.trim() ?? "",
+      keyPassphraseEnc: dbSettings.keyPassphraseEnc?.trim() ?? "",
+    };
   }
 
-  return { host, username, password: privateKey ? undefined : password, privateKey: privateKey || undefined, passphrase: privateKey ? passphrase || undefined : undefined, port };
+  return {
+    enabled: String(process.env.SSH_ENABLED ?? "false").toLowerCase() === "true",
+    host: process.env.SSH_HOST?.trim() ?? "",
+    username: process.env.SSH_USERNAME?.trim() ?? "",
+    port: Number(process.env.SSH_PORT ?? "22"),
+    passwordEnc: process.env.SSH_PASSWORD_ENC?.trim() ?? "",
+    privateKeyEnc: process.env.SSH_PRIVATE_KEY_ENC?.trim() ?? "",
+    keyPassphraseEnc: process.env.SSH_KEY_PASSPHRASE_ENC?.trim() ?? "",
+  };
 }
 
-function getSshPassword() {
-  const encryptedPassword = process.env.SSH_PASSWORD_ENC?.trim();
+function getSshPassword(encryptedPassword) {
   const fallbackPassword = process.env.SSH_PASSWORD?.trim();
 
   if (encryptedPassword) {
@@ -80,16 +85,47 @@ function getSshPassword() {
   return fallbackPassword ?? "";
 }
 
-function getSshPrivateKey() {
-  const encryptedPrivateKey = process.env.SSH_PRIVATE_KEY_ENC?.trim();
+function getSshPrivateKey(encryptedPrivateKey) {
   if (!encryptedPrivateKey) return "";
   return decryptSecret(encryptedPrivateKey);
 }
 
-function getSshKeyPassphrase() {
-  const encryptedPassphrase = process.env.SSH_KEY_PASSPHRASE_ENC?.trim();
+function getSshKeyPassphrase(encryptedPassphrase) {
   if (!encryptedPassphrase) return "";
   return decryptSecret(encryptedPassphrase);
+}
+
+async function isSshBackendEnabled() {
+  const settings = await loadSshRuntimeSettings();
+  return settings.enabled;
+}
+
+async function getSshRuntimeConfig() {
+  const settings = await loadSshRuntimeSettings();
+
+  const host = settings.host;
+  const username = settings.username;
+  const password = getSshPassword(settings.passwordEnc);
+  const privateKey = getSshPrivateKey(settings.privateKeyEnc);
+  const passphrase = getSshKeyPassphrase(settings.keyPassphraseEnc);
+  const port = Number(settings.port ?? 22);
+
+  if (!host || !username || (!password && !privateKey)) {
+    throw new Error("SSH backend is enabled but host/username and private key or password are required");
+  }
+
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    throw new Error("SSH port must be between 1 and 65535");
+  }
+
+  return {
+    host,
+    username,
+    password: privateKey ? undefined : password,
+    privateKey: privateKey || undefined,
+    passphrase: privateKey ? passphrase || undefined : undefined,
+    port,
+  };
 }
 
 function decryptSecret(ciphertext) {
@@ -214,7 +250,7 @@ app.prepare().then(() => {
     }
   });
 
-  terminalNs.on("connection", (socket) => {
+  terminalNs.on("connection", async (socket) => {
     const userId = socket.data.userId;
     const readOnly = socket.data.readOnly;
     const mode = socket.data.mode;
@@ -235,7 +271,7 @@ app.prepare().then(() => {
     userSessionCount.set(userId, current + 1);
 
     const cwd = process.env.HOST_FS_MOUNT ?? "/host_system";
-    const useSshHostShell = mode === "host" && isSshBackendEnabled();
+    const useSshHostShell = mode === "host" && await isSshBackendEnabled();
 
     let ptyProcess = null;
     let sshConn = null;
@@ -243,7 +279,7 @@ app.prepare().then(() => {
 
     if (useSshHostShell) {
       try {
-        const sshCfg = getSshRuntimeConfig();
+        const sshCfg = await getSshRuntimeConfig();
         sshConn = new SSHClient();
         sshConn.on("ready", () => {
           sshConn.shell(

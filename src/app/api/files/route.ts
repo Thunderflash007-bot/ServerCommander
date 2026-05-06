@@ -61,9 +61,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       return await withSftpClient(async (sftp) => {
-        const remotePath = resolveRemotePath(virtualPath);
+        const remotePath = await resolveRemotePath(virtualPath);
         const stat = await statRemotePath(sftp, remotePath);
 
         if (mode === "download") {
@@ -232,9 +232,9 @@ export async function POST(req: NextRequest) {
       }))
     );
 
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
-        const remoteDir = resolveRemotePath(virtualDir);
+        const remoteDir = await resolveRemotePath(virtualDir);
         await sftp.mkdir(remoteDir, true);
         for (const upload of uploads) {
           const remotePath = path.posix.join(remoteDir, upload.relativePath.replace(/^\//, ""));
@@ -265,9 +265,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "mkdir") {
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
-        await sftp.mkdir(resolveRemotePath(virtualPath), true);
+        await sftp.mkdir(await resolveRemotePath(virtualPath), true);
       });
     } else {
       await fs.mkdir(resolveSafePath(virtualPath), { recursive: true });
@@ -276,9 +276,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "create-file") {
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
-        await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), resolveRemotePath(virtualPath));
+        await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), await resolveRemotePath(virtualPath));
       });
     } else {
       await fs.writeFile(resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
@@ -317,9 +317,9 @@ export async function PATCH(req: NextRequest) {
       return jsonError("Rename permission denied", 403);
     }
 
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
-        await sftp.rename(resolveRemotePath(virtualPath), resolveRemotePath(targetVirtualPath));
+        await sftp.rename(await resolveRemotePath(virtualPath), await resolveRemotePath(targetVirtualPath));
       });
     } else {
       await fs.rename(resolveSafePath(virtualPath), resolveSafePath(targetVirtualPath));
@@ -331,9 +331,9 @@ export async function PATCH(req: NextRequest) {
     if (!canWritePath(perms, virtualPath)) {
       return jsonError("Write permission denied", 403);
     }
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
-        await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), resolveRemotePath(virtualPath));
+        await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), await resolveRemotePath(virtualPath));
       });
     } else {
       await fs.writeFile(resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
@@ -366,9 +366,9 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    if (isSshBackendEnabled()) {
+    if (await isSshBackendEnabled()) {
       await withSftpClient(async (sftp) => {
-        const remotePath = resolveRemotePath(virtualPath);
+        const remotePath = await resolveRemotePath(virtualPath);
         const stat = await statRemotePath(sftp, remotePath);
         if (stat.isDirectory) {
           await sftp.rmdir(remotePath, true);

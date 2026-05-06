@@ -227,6 +227,22 @@ model SmtpSettings {
   createdAt   DateTime @default(now())
 }
 
+// ── SSH/SFTP Settings ───────────────────────────────────────────────────────
+
+model SshSettings {
+  id               String   @id
+  enabled          Boolean  @default(false)
+  host             String?
+  port             Int?
+  username         String?
+  passwordEnc      String?
+  privateKeyEnc    String?
+  keyPassphraseEnc String?
+  sftpRoot         String?
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
+}
+
 // ── One-time auth/reset codes ───────────────────────────────────────────────
 
 model AuthCode {
