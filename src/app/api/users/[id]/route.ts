@@ -54,11 +54,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (currentUser.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { displayName, isActive, password, permissions, permissionGroupIds, forcePasswordChange } = body;
+  const { displayName, email, isActive, password, permissions, permissionGroupIds, forcePasswordChange } = body;
 
   // Update base user fields
   const updateData: Record<string, unknown> = {};
   if (displayName !== undefined) updateData.displayName = displayName;
+  if (email !== undefined) updateData.email = String(email).trim().toLowerCase() || null;
   if (isActive !== undefined) updateData.isActive = isActive;
   if (password !== undefined) {
     if (typeof password !== "string" || password.trim().length < 8) {

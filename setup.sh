@@ -156,6 +156,69 @@ else
   success "Using local host-mount backend for Terminal + Files"
 fi
 
+# ── SMTP / Mail Configuration ────────────────────────────────────────────────
+header "SMTP / Mail Configuration"
+
+read -rp "  Enable SMTP (mail sending)? (y/N): " SMTP_ENABLE_INPUT
+SMTP_ENABLE_INPUT="${SMTP_ENABLE_INPUT:-N}"
+
+SMTP_ENABLED=false
+SMTP_HOST=""
+SMTP_PORT="587"
+SMTP_SECURE=false
+SMTP_USERNAME=""
+SMTP_PASSWORD=""
+SMTP_FROM_EMAIL=""
+SMTP_USE_ALIAS=false
+SMTP_FROM_NAME=""
+
+if [[ "$SMTP_ENABLE_INPUT" =~ ^[Yy]$ ]]; then
+  SMTP_ENABLED=true
+
+  read -rp "  SMTP host: " SMTP_HOST
+  [[ -z "$SMTP_HOST" ]] && fatal "SMTP host is required when SMTP is enabled"
+
+  read -rp "  SMTP port [587]: " SMTP_PORT
+  SMTP_PORT="${SMTP_PORT:-587}"
+  if ! [[ "$SMTP_PORT" =~ ^[0-9]+$ ]] || (( SMTP_PORT < 1 || SMTP_PORT > 65535 )); then
+    fatal "Invalid SMTP port: $SMTP_PORT"
+  fi
+
+  read -rp "  Use secure SMTP/SSL? (y/N): " SMTP_SECURE_INPUT
+  SMTP_SECURE_INPUT="${SMTP_SECURE_INPUT:-N}"
+  if [[ "$SMTP_SECURE_INPUT" =~ ^[Yy]$ ]]; then
+    SMTP_SECURE=true
+  fi
+
+  read -rp "  SMTP username: " SMTP_USERNAME
+  [[ -z "$SMTP_USERNAME" ]] && fatal "SMTP username is required when SMTP is enabled"
+
+  while true; do
+    read -rsp "  SMTP password: " SMTP_PASSWORD
+    echo
+    if [[ -z "$SMTP_PASSWORD" ]]; then
+      warn "SMTP password cannot be empty. Try again."
+      continue
+    fi
+    break
+  done
+
+  read -rp "  Mail from address (e.g. noreply@example.com): " SMTP_FROM_EMAIL
+  [[ -z "$SMTP_FROM_EMAIL" ]] && fatal "Mail from address is required when SMTP is enabled"
+
+  read -rp "  Use alias sender name? (y/N): " SMTP_ALIAS_INPUT
+  SMTP_ALIAS_INPUT="${SMTP_ALIAS_INPUT:-N}"
+  if [[ "$SMTP_ALIAS_INPUT" =~ ^[Yy]$ ]]; then
+    SMTP_USE_ALIAS=true
+    read -rp "  Alias sender name (e.g. ServerCommander Security): " SMTP_FROM_NAME
+    [[ -z "$SMTP_FROM_NAME" ]] && fatal "Alias name is required when alias sender is enabled"
+  fi
+
+  success "SMTP enabled (${SMTP_HOST}:${SMTP_PORT})"
+else
+  success "SMTP disabled"
+fi
+
 # ── Secure Secret Generation ──────────────────────────────────────────────────
 header "Generating cryptographic secrets"
 
@@ -202,6 +265,10 @@ ADMIN_USERNAME_ESCAPED="$(escape_env "$ADMIN_USERNAME")"
 SSH_HOST_ESCAPED="$(escape_env "$SSH_HOST")"
 SSH_USERNAME_ESCAPED="$(escape_env "$SSH_USERNAME")"
 SSH_SFTP_ROOT_ESCAPED="$(escape_env "$SSH_SFTP_ROOT")"
+SMTP_HOST_ESCAPED="$(escape_env "$SMTP_HOST")"
+SMTP_USERNAME_ESCAPED="$(escape_env "$SMTP_USERNAME")"
+SMTP_FROM_EMAIL_ESCAPED="$(escape_env "$SMTP_FROM_EMAIL")"
+SMTP_FROM_NAME_ESCAPED="$(escape_env "$SMTP_FROM_NAME")"
 
 ADMIN_PASSWORD_ENC="$(encrypt_secret_env "$ADMIN_PASSWORD")"
 ADMIN_PASSWORD_ENC_ESCAPED="$(escape_env "$ADMIN_PASSWORD_ENC")"
@@ -209,6 +276,7 @@ ADMIN_PASSWORD_ENC_ESCAPED="$(escape_env "$ADMIN_PASSWORD_ENC")"
 SSH_PASSWORD_ENC=""
 SSH_PRIVATE_KEY_ENC=""
 SSH_KEY_PASSPHRASE_ENC=""
+SMTP_PASSWORD_ENC=""
 if [[ "$SSH_ENABLED" == "true" ]]; then
   if [[ -n "$SSH_PASSWORD" ]]; then
     SSH_PASSWORD_ENC="$(encrypt_secret_env "$SSH_PASSWORD")"
@@ -220,9 +288,13 @@ if [[ "$SSH_ENABLED" == "true" ]]; then
     SSH_KEY_PASSPHRASE_ENC="$(encrypt_secret_env "$SSH_KEY_PASSPHRASE")"
   fi
 fi
+if [[ "$SMTP_ENABLED" == "true" ]]; then
+  SMTP_PASSWORD_ENC="$(encrypt_secret_env "$SMTP_PASSWORD")"
+fi
 SSH_PASSWORD_ENC_ESCAPED="$(escape_env "$SSH_PASSWORD_ENC")"
 SSH_PRIVATE_KEY_ENC_ESCAPED="$(escape_env "$SSH_PRIVATE_KEY_ENC")"
 SSH_KEY_PASSPHRASE_ENC_ESCAPED="$(escape_env "$SSH_KEY_PASSPHRASE_ENC")"
+SMTP_PASSWORD_ENC_ESCAPED="$(escape_env "$SMTP_PASSWORD_ENC")"
 
 cat > "$ENV_FILE" <<EOF
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,6 +327,16 @@ SSH_PASSWORD_ENC="${SSH_PASSWORD_ENC_ESCAPED}"
 SSH_PRIVATE_KEY_ENC="${SSH_PRIVATE_KEY_ENC_ESCAPED}"
 SSH_KEY_PASSPHRASE_ENC="${SSH_KEY_PASSPHRASE_ENC_ESCAPED}"
 SSH_SFTP_ROOT="${SSH_SFTP_ROOT_ESCAPED}"
+
+SMTP_ENABLED=${SMTP_ENABLED}
+SMTP_HOST="${SMTP_HOST_ESCAPED}"
+SMTP_PORT=${SMTP_PORT}
+SMTP_SECURE=${SMTP_SECURE}
+SMTP_USERNAME="${SMTP_USERNAME_ESCAPED}"
+SMTP_PASSWORD_ENC="${SMTP_PASSWORD_ENC_ESCAPED}"
+SMTP_FROM_EMAIL="${SMTP_FROM_EMAIL_ESCAPED}"
+SMTP_USE_ALIAS=${SMTP_USE_ALIAS}
+SMTP_FROM_NAME="${SMTP_FROM_NAME_ESCAPED}"
 
 SESSION_MAX_AGE=28800
 COOKIE_SECURE=false

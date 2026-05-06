@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   Menu,
   Layers3,
+  Mail,
+  UserCircle2,
 } from "lucide-react";
 import { useState } from "react";
 import type { UserPermission } from "@prisma/client";
@@ -33,6 +35,8 @@ const navItems = [
   { href: "/stacks", label: "Stacks", icon: Layers3, perm: "dockerAccess" as const },
   { href: "/files", label: "Files", icon: FolderOpen, perm: "fsAccess" as const },
   { href: "/terminal", label: "Terminal", icon: Terminal, perm: "terminalAccess" as const },
+  { href: "/profile", label: "Profile", icon: UserCircle2, always: true },
+  { href: "/settings/smtp", label: "SMTP", icon: Mail, adminOnly: true },
   { href: "/users", label: "Users", icon: Users, adminOnly: true },
   { href: "/audit", label: "Audit Log", icon: ScrollText, adminOnly: true },
 ];

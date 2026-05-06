@@ -3,6 +3,18 @@ import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { writeAuditLog } from "@/lib/audit";
+import { isSmtpEnabled, sendMail } from "@/lib/mail";
+import { randomBytes } from "crypto";
+
+function generateTemporaryPassword(length = 14): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+  const bytes = randomBytes(length);
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    out += chars[bytes[i] % chars.length];
+  }
+  return out;
+}
 
 // ── GET /api/users — list all users (admin only) ──────────────────────────────
 
@@ -15,6 +27,7 @@ export async function GET() {
     select: {
       id: true,
       username: true,
+      email: true,
       displayName: true,
       role: true,
       isActive: true,
@@ -52,10 +65,16 @@ export async function POST(req: NextRequest) {
   if (currentUser.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { username, password, displayName, permissions } = body;
+  const { username, email, displayName, permissions } = body;
 
-  if (!username || !password) {
-    return NextResponse.json({ error: "username and password are required" }, { status: 400 });
+  if (!username) {
+    return NextResponse.json({ error: "username is required" }, { status: 400 });
+  }
+
+  const smtpEnabled = await isSmtpEnabled();
+  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (smtpEnabled && !normalizedEmail) {
+    return NextResponse.json({ error: "email is required while SMTP is enabled" }, { status: 400 });
   }
 
   const existing = await db.user.findUnique({ where: { username } });
@@ -63,11 +82,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Username already exists" }, { status: 409 });
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  if (normalizedEmail) {
+    const existingEmail = await db.user.findFirst({ where: { email: normalizedEmail }, select: { id: true } });
+    if (existingEmail) {
+      return NextResponse.json({ error: "Email already exists" }, { status: 409 });
+    }
+  }
+
+  const temporaryPassword = generateTemporaryPassword();
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
 
   const newUser = await db.user.create({
     data: {
       username,
+      email: normalizedEmail || null,
       passwordHash,
       displayName: displayName ?? null,
       role: "USER",
@@ -103,5 +131,20 @@ export async function POST(req: NextRequest) {
     req
   );
 
-  return NextResponse.json({ user: { id: newUser.id, username: newUser.username } }, { status: 201 });
+  if (smtpEnabled && normalizedEmail) {
+    await sendMail({
+      to: normalizedEmail,
+      subject: "Welcome to ServerCommander",
+      text: `Hello ${displayName?.trim() || username},\n\nYour ServerCommander account has been created.\n\nUsername: ${username}\nTemporary password: ${temporaryPassword}\n\nAt first login you must set your own password.`,
+    });
+  }
+
+  return NextResponse.json(
+    {
+      user: { id: newUser.id, username: newUser.username },
+      temporaryPassword: smtpEnabled ? undefined : temporaryPassword,
+      mailSent: smtpEnabled && !!normalizedEmail,
+    },
+    { status: 201 }
+  );
 }

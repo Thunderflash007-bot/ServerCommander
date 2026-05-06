@@ -17,17 +17,20 @@ datasource db {
 model User {
   id                   String    @id @default(cuid())
   username             String    @unique
+  email                String?   @unique
   passwordHash         String
   displayName          String?
   role                 String    @default("USER")
   isActive             Boolean   @default(true)
   mustChangePassword   Boolean   @default(false)
+  twoFactorEnabled     Boolean   @default(false)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
   sessions    Session[]
   permissions UserPermission?
   permissionGroups UserPermissionGroup[]
+  authCodes   AuthCode[]
   auditLogs   AuditLog[]
 }
 
@@ -205,4 +208,38 @@ model AuditLog {
   @@index([userId])
   @@index([createdAt])
   @@index([resource])
+}
+
+// ── SMTP Settings ────────────────────────────────────────────────────────────
+
+model SmtpSettings {
+  id          String   @id
+  enabled     Boolean  @default(false)
+  host        String?
+  port        Int?
+  secure      Boolean  @default(false)
+  username    String?
+  passwordEnc String?
+  fromEmail   String?
+  fromName    String?
+  useAlias    Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
+// ── One-time auth/reset codes ───────────────────────────────────────────────
+
+model AuthCode {
+  id         String   @id @default(cuid())
+  userId     String
+  purpose    String
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
 }

@@ -19,6 +19,8 @@ async function main() {
     },
   });
 
+  await seedSmtpSettingsIfMissing();
+
   if (existing) {
     const looksLikeBcrypt = /^\$2[aby]\$\d{2}\$/.test(existing.passwordHash ?? "");
     if (!looksLikeBcrypt) {
@@ -105,6 +107,36 @@ async function main() {
   });
 
   console.log(`[seed] Created admin user: ${admin.username} (id: ${admin.id})`);
+}
+
+async function seedSmtpSettingsIfMissing() {
+  const smtp = (prisma as any).smtpSettings;
+  if (!smtp) {
+    console.warn("[seed] smtpSettings model not available in current Prisma client. Skipping SMTP seed.");
+    return;
+  }
+
+  const existing = await smtp.findUnique({ where: { id: "default" } });
+  if (existing) return;
+
+  const enabled = String(process.env.SMTP_ENABLED ?? "false").toLowerCase() === "true";
+
+  await smtp.create({
+    data: {
+      id: "default",
+      enabled,
+      host: process.env.SMTP_HOST?.trim() || null,
+      port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : null,
+      secure: String(process.env.SMTP_SECURE ?? "false").toLowerCase() === "true",
+      username: process.env.SMTP_USERNAME?.trim() || null,
+      passwordEnc: process.env.SMTP_PASSWORD_ENC?.trim() || null,
+      fromEmail: process.env.SMTP_FROM_EMAIL?.trim() || null,
+      fromName: process.env.SMTP_FROM_NAME?.trim() || null,
+      useAlias: String(process.env.SMTP_USE_ALIAS ?? "false").toLowerCase() === "true",
+    },
+  });
+
+  console.log(`[seed] SMTP settings created (enabled=${enabled}).`);
 }
 
 function getAdminPassword(): string {

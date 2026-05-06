@@ -30,9 +30,11 @@ type CurrentUser = {
   id: string;
   username: string;
   displayName: string | null;
+  email: string | null;
   role: string;
   isActive: boolean;
   mustChangePassword: boolean;
+  twoFactorEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
   permissions: Awaited<ReturnType<typeof getUserPermissions>>;
@@ -165,7 +167,19 @@ export async function getCurrentUser(): Promise<
   if (!user || !user.isActive) return null;
 
   const permissions = await getUserPermissions(user.id);
-  return { ...user, permissions };
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    email: (user as { email?: string | null }).email ?? null,
+    role: user.role,
+    isActive: user.isActive,
+    mustChangePassword: user.mustChangePassword,
+    twoFactorEnabled: (user as { twoFactorEnabled?: boolean }).twoFactorEnabled ?? false,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    permissions,
+  };
 }
 
 export async function getUserPermissions(userId: string) {

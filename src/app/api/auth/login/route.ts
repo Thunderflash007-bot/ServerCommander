@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { createSession, setSessionCookie } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { getLoginRateLimit } from "@/lib/rate-limit";
+import { issueAuthCode } from "@/lib/auth-codes";
+import { isSmtpEnabled, sendMail } from "@/lib/mail";
 
 export async function POST(req: NextRequest) {
   try {
@@ -78,6 +80,35 @@ export async function POST(req: NextRequest) {
         req
       );
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+    }
+
+    if (user.twoFactorEnabled) {
+      const smtpEnabled = await isSmtpEnabled();
+      if (!smtpEnabled) {
+        return NextResponse.json(
+          { error: "2FA is enabled but SMTP is not configured" },
+          { status: 503 }
+        );
+      }
+      if (!user.email) {
+        return NextResponse.json(
+          { error: "2FA requires an email address on your account" },
+          { status: 400 }
+        );
+      }
+
+      const challenge = await issueAuthCode(user.id, "LOGIN_2FA", 300);
+      await sendMail({
+        to: user.email,
+        subject: "ServerCommander Login Code",
+        text: `Hello ${user.displayName ?? user.username},\n\nYour login code is: ${challenge.code}\n\nThis code expires in 5 minutes.\n\nIf you did not request this login, contact your administrator.`,
+      });
+
+      return NextResponse.json({
+        requiresTwoFactor: true,
+        challengeId: challenge.id,
+        message: "A 6-digit code was sent to your email.",
+      });
     }
 
     const token = await createSession(user.id, user.username, user.role, {

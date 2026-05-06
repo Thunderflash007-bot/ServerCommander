@@ -7,6 +7,10 @@ export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [challengeId, setChallengeId] = useState("");
+  const [resetIdentifier, setResetIdentifier] = useState("");
+  const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showResetInfo, setShowResetInfo] = useState(false);
@@ -24,7 +28,14 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password }),
       });
 
-      let payload: { error?: string; user?: { mustChangePassword: boolean } } | null = null;
+      let payload:
+        | {
+            error?: string;
+            user?: { mustChangePassword: boolean };
+            requiresTwoFactor?: boolean;
+            challengeId?: string;
+          }
+        | null = null;
       const contentType = res.headers.get("content-type") ?? "";
 
       if (contentType.includes("application/json")) {
@@ -42,6 +53,12 @@ export default function LoginPage() {
         return;
       }
 
+      if (payload?.requiresTwoFactor && payload.challengeId) {
+        setChallengeId(payload.challengeId);
+        setRequiresTwoFactor(true);
+        return;
+      }
+
       // Store mustChangePassword flag for dashboard
       if (payload?.user?.mustChangePassword) {
         localStorage.setItem("mustChangePassword", "true");
@@ -53,6 +70,73 @@ export default function LoginPage() {
       router.refresh();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleTwoFactorSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/login-2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ challengeId, code: twoFactorCode }),
+      });
+
+      const payload = (await res.json().catch(() => ({}))) as { error?: string; user?: { mustChangePassword: boolean } };
+      if (!res.ok) {
+        setError(payload.error ?? "2FA verification failed");
+        return;
+      }
+
+      if (payload?.user?.mustChangePassword) {
+        localStorage.setItem("mustChangePassword", "true");
+      } else {
+        localStorage.removeItem("mustChangePassword");
+      }
+
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResetRequest(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const statusRes = await fetch("/api/auth/smtp-status", { credentials: "same-origin" });
+      const status = (await statusRes.json().catch(() => ({ enabled: false }))) as { enabled?: boolean };
+      if (!status.enabled) {
+        setError("Passwort-Reset per E-Mail ist deaktiviert. Bitte Administrator kontaktieren.");
+        return;
+      }
+
+      const res = await fetch("/api/auth/password-reset/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: resetIdentifier }),
+      });
+
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(payload.error ?? "Reset request failed");
+        return;
+      }
+
+      router.push("/reset-password");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
     } finally {
       setLoading(false);
     }
@@ -84,6 +168,78 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-card/95 backdrop-blur border border-border/80 rounded-2xl p-7 shadow-[0_20px_70px_rgba(0,0,0,0.5)]">
+          {requiresTwoFactor ? (
+            <form onSubmit={handleTwoFactorSubmit} className="space-y-5">
+              <div>
+                <label htmlFor="twofactor" className="block text-sm font-medium text-foreground mb-1.5">
+                  2FA Code
+                </label>
+                <input
+                  id="twofactor"
+                  type="text"
+                  required
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+                  className="w-full rounded-lg border border-input bg-background/70 px-3.5 py-2.5 text-sm"
+                  placeholder="6-digit code"
+                />
+                <p className="text-xs text-muted-foreground mt-2">A 6-digit code was sent to your email.</p>
+              </div>
+
+              {error && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {loading ? "Verifying..." : "Verify & sign in"}
+              </button>
+            </form>
+          ) : showResetInfo ? (
+            <form onSubmit={handleResetRequest} className="space-y-5">
+              <div>
+                <label htmlFor="reset-identifier" className="block text-sm font-medium text-foreground mb-1.5">
+                  Username or Email
+                </label>
+                <input
+                  id="reset-identifier"
+                  type="text"
+                  required
+                  value={resetIdentifier}
+                  onChange={(e) => setResetIdentifier(e.target.value)}
+                  className="w-full rounded-lg border border-input bg-background/70 px-3.5 py-2.5 text-sm"
+                  placeholder="username or email"
+                />
+              </div>
+
+              {error && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {loading ? "Sending code..." : "Send reset code"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowResetInfo(false)}
+                className="w-full rounded-lg border border-input px-4 py-2.5 text-sm"
+              >
+                Back to login
+              </button>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-foreground mb-1.5">
@@ -146,6 +302,7 @@ export default function LoginPage() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+          )}
         </div>
 
         <p className="mt-6 text-center text-xs text-muted-foreground/80">
