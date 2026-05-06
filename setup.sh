@@ -184,7 +184,7 @@ if [[ "$SMTP_ENABLE_INPUT" =~ ^[Yy]$ ]]; then
     fatal "Invalid SMTP port: $SMTP_PORT"
   fi
 
-  read -rp "  Use secure SMTP/SSL? (y/N): " SMTP_SECURE_INPUT
+  read -rp "  Use encrypted SMTP transport? (Port 465 = SSL/TLS, Port 587 = STARTTLS) (y/N): " SMTP_SECURE_INPUT
   SMTP_SECURE_INPUT="${SMTP_SECURE_INPUT:-N}"
   if [[ "$SMTP_SECURE_INPUT" =~ ^[Yy]$ ]]; then
     SMTP_SECURE=true

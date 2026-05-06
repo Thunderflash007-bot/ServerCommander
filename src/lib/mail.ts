@@ -26,10 +26,14 @@ export async function sendMail(payload: MailPayload): Promise<void> {
     throw new Error("SMTP config incomplete");
   }
 
+  const useImplicitTls = cfg.secure && cfg.port === 465;
+  const requireStartTls = cfg.secure && cfg.port !== 465;
+
   const transporter = nodemailer.createTransport({
     host: cfg.host,
     port: cfg.port,
-    secure: cfg.secure,
+    secure: useImplicitTls,
+    requireTLS: requireStartTls,
     auth: {
       user: cfg.username,
       pass: decryptSecret(cfg.passwordEnc),
