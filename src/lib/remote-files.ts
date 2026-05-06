@@ -91,6 +91,12 @@ export async function getSshConfig() {
     password: privateKey ? undefined : password,
     privateKey: privateKey || undefined,
     passphrase: privateKey ? passphrase || undefined : undefined,
+    tryKeyboard: !privateKey,
+    onKeyboardInteractive: !privateKey
+      ? (_name: string, _instructions: string, _lang: string, _prompts: Array<{ prompt: string; echo: boolean }>, finish: (answers: string[]) => void) => {
+          finish([password]);
+        }
+      : undefined,
   };
 }
 

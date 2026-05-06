@@ -281,6 +281,9 @@ app.prepare().then(() => {
       try {
         const sshCfg = await getSshRuntimeConfig();
         sshConn = new SSHClient();
+        sshConn.on("keyboard-interactive", (_name, _instructions, _lang, _prompts, finish) => {
+          finish([sshCfg.password ?? ""]);
+        });
         sshConn.on("ready", () => {
           sshConn.shell(
             {
@@ -313,6 +316,7 @@ app.prepare().then(() => {
           password: sshCfg.password,
           privateKey: sshCfg.privateKey,
           passphrase: sshCfg.passphrase,
+          tryKeyboard: !sshCfg.privateKey,
           readyTimeout: 15000,
         });
       } catch (err) {

@@ -6,6 +6,11 @@ import { writeAuditLog } from "@/lib/audit";
 
 type AuthMode = "password" | "key";
 
+function normalizePrivateKey(value: string): string {
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  return normalized ? `${normalized}\n` : "";
+}
+
 function toPort(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1 || parsed > 65535) {
@@ -72,7 +77,7 @@ export async function PATCH(req: NextRequest) {
       : existing?.passwordEnc ?? null;
   } else {
     privateKeyEnc = typeof body.privateKey === "string" && body.privateKey.trim().length > 0
-      ? encryptSecret(body.privateKey)
+      ? encryptSecret(normalizePrivateKey(body.privateKey))
       : existing?.privateKeyEnc ?? null;
 
     keyPassphraseEnc = typeof body.keyPassphrase === "string" && body.keyPassphrase.trim().length > 0
