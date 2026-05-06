@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getSmtpSettings, isSmtpEnabled, sendMail } from "@/lib/mail";
+import { buildSmtpTestMail, getSmtpSettings, isSmtpEnabled, sendMail } from "@/lib/mail";
 import { writeAuditLog } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
@@ -26,15 +26,17 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const smtpTestMail = buildSmtpTestMail({
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      fromEmail: smtp.fromEmail,
+    });
     await sendMail({
       to: target,
-      subject: "ServerCommander SMTP Test",
-      text:
-        `This is a test email from ServerCommander.\n\n` +
-        `Host: ${smtp.host}\n` +
-        `Port: ${smtp.port}\n` +
-        `Encrypted transport: ${smtp.secure ? "enabled" : "disabled"}\n` +
-        `From: ${smtp.fromEmail}`,
+      subject: smtpTestMail.subject,
+      text: smtpTestMail.text,
+      html: smtpTestMail.html,
     });
 
     await writeAuditLog(

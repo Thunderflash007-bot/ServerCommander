@@ -576,8 +576,7 @@ function CreateGroupModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
 function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -588,7 +587,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
     const res = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, displayName: displayName || undefined }),
+      body: JSON.stringify({ username, email }),
     });
     setLoading(false);
     if (res.ok) {
@@ -605,8 +604,10 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
         <h2 className="text-lg font-bold mb-4">Create User</h2>
         <form onSubmit={handleCreate} className="space-y-4">
           <Field label="Username" value={username} onChange={setUsername} required />
-          <Field label="Display Name (optional)" value={displayName} onChange={setDisplayName} />
-          <Field label="Password" value={password} onChange={setPassword} type="password" required />
+          <Field label="Email" value={email} onChange={setEmail} type="email" required />
+          <p className="text-xs text-muted-foreground">
+            A secure temporary password is generated automatically and sent to this email address.
+          </p>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-border px-4 py-2.5 text-sm hover:bg-accent transition">

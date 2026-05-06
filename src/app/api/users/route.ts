@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { writeAuditLog } from "@/lib/audit";
-import { isSmtpEnabled, sendMail } from "@/lib/mail";
+import { buildWelcomeCredentialsMail, isSmtpEnabled, sendMail } from "@/lib/mail";
 import { randomBytes } from "crypto";
 
 function generateTemporaryPassword(length = 14): string {
@@ -65,16 +65,20 @@ export async function POST(req: NextRequest) {
   if (currentUser.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { username, email, displayName, permissions } = body;
+  const { username, email, permissions } = body;
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
   }
 
   const smtpEnabled = await isSmtpEnabled();
+  if (!smtpEnabled) {
+    return NextResponse.json({ error: "SMTP must be configured before creating users" }, { status: 400 });
+  }
+
   const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
-  if (smtpEnabled && !normalizedEmail) {
-    return NextResponse.json({ error: "email is required while SMTP is enabled" }, { status: 400 });
+  if (!normalizedEmail) {
+    return NextResponse.json({ error: "email is required" }, { status: 400 });
   }
 
   const existing = await db.user.findUnique({ where: { username } });
@@ -95,9 +99,9 @@ export async function POST(req: NextRequest) {
   const newUser = await db.user.create({
     data: {
       username,
-      email: normalizedEmail || null,
+      email: normalizedEmail,
       passwordHash,
-      displayName: displayName ?? null,
+      displayName: null,
       role: "USER",
       mustChangePassword: true,
       permissions: permissions
@@ -131,19 +135,22 @@ export async function POST(req: NextRequest) {
     req
   );
 
-  if (smtpEnabled && normalizedEmail) {
-    await sendMail({
-      to: normalizedEmail,
-      subject: "Welcome to ServerCommander",
-      text: `Hello ${displayName?.trim() || username},\n\nYour ServerCommander account has been created.\n\nUsername: ${username}\nTemporary password: ${temporaryPassword}\n\nAt first login you must set your own password.`,
-    });
-  }
+  const welcomeMail = buildWelcomeCredentialsMail({
+    displayName: username,
+    username,
+    temporaryPassword,
+  });
+  await sendMail({
+    to: normalizedEmail,
+    subject: welcomeMail.subject,
+    text: welcomeMail.text,
+    html: welcomeMail.html,
+  });
 
   return NextResponse.json(
     {
       user: { id: newUser.id, username: newUser.username },
-      temporaryPassword: smtpEnabled ? undefined : temporaryPassword,
-      mailSent: smtpEnabled && !!normalizedEmail,
+      mailSent: true,
     },
     { status: 201 }
   );

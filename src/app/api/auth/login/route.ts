@@ -5,7 +5,7 @@ import { createSession, setSessionCookie } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { getLoginRateLimit } from "@/lib/rate-limit";
 import { issueAuthCode } from "@/lib/auth-codes";
-import { isSmtpEnabled, sendMail } from "@/lib/mail";
+import { buildLoginCodeMail, isSmtpEnabled, sendMail } from "@/lib/mail";
 
 export async function POST(req: NextRequest) {
   try {
@@ -98,10 +98,16 @@ export async function POST(req: NextRequest) {
       }
 
       const challenge = await issueAuthCode(user.id, "LOGIN_2FA", 300);
+      const loginCodeMail = buildLoginCodeMail({
+        displayName: user.displayName ?? user.username,
+        code: challenge.code,
+        minutesValid: 5,
+      });
       await sendMail({
         to: user.email,
-        subject: "ServerCommander Login Code",
-        text: `Hello ${user.displayName ?? user.username},\n\nYour login code is: ${challenge.code}\n\nThis code expires in 5 minutes.\n\nIf you did not request this login, contact your administrator.`,
+        subject: loginCodeMail.subject,
+        text: loginCodeMail.text,
+        html: loginCodeMail.html,
       });
 
       return NextResponse.json({

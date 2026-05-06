@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { issueAuthCode } from "@/lib/auth-codes";
-import { isSmtpEnabled, sendMail } from "@/lib/mail";
+import { buildPasswordResetCodeMail, isSmtpEnabled, sendMail } from "@/lib/mail";
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,10 +32,16 @@ export async function POST(req: NextRequest) {
     }
 
     const challenge = await issueAuthCode(user.id, "PASSWORD_RESET", 600);
+    const resetMail = buildPasswordResetCodeMail({
+      displayName: user.displayName ?? user.username,
+      code: challenge.code,
+      minutesValid: 10,
+    });
     await sendMail({
       to: user.email,
-      subject: "ServerCommander Password Reset Code",
-      text: `Hello ${user.displayName ?? user.username},\n\nYour password reset code is: ${challenge.code}\n\nThis code expires in 10 minutes.`,
+      subject: resetMail.subject,
+      text: resetMail.text,
+      html: resetMail.html,
     });
 
     return NextResponse.json({ success: true, routedToCodeEntry: true });
