@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { ContainerDetailsActions } from "@/components/docker/ContainerDetailsActions";
 import { ContainerEditPanel } from "@/components/docker/ContainerEditPanel";
+import { ContainerStatusChip } from "@/components/docker/ContainerStatusChip";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -56,7 +57,17 @@ export default async function ContainerInspectPage({ params }: Params) {
   const state = {
     Running: Boolean(getProp<boolean>(stateObj, "Running", "running") ?? false),
     Status: String(getProp<string>(stateObj, "Status", "status") ?? "unknown"),
+    Health: String(
+      getProp<string>(
+        (getProp<Record<string, unknown>>(stateObj, "Health", "health") ?? {}) as Record<string, unknown>,
+        "Status",
+        "status"
+      ) ?? ""
+    ),
   };
+
+  const statusTextForChip = state.Health ? `${state.Status} (health: ${state.Health})` : state.Status;
+  const rawStatusText = state.Health ? `${state.Status} / health: ${state.Health}` : state.Status;
 
   const configObj = (getProp<Record<string, unknown>>(inspect, "Config", "config") ?? {}) as Record<string, unknown>;
   const hostConfigObj = (getProp<Record<string, unknown>>(inspect, "HostConfig", "hostConfig") ?? {}) as Record<string, unknown>;
@@ -133,7 +144,10 @@ export default async function ContainerInspectPage({ params }: Params) {
             </div>
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="text-xs text-muted-foreground">Status</div>
-              <div className="mt-1 text-sm font-semibold text-foreground">{state.Status ?? (state.Running ? "running" : "stopped")}</div>
+              <div className="mt-1 flex items-center gap-2 text-sm font-semibold text-foreground">
+                <ContainerStatusChip state={state.Status} statusText={statusTextForChip} />
+                <span className="text-xs text-muted-foreground">{rawStatusText}</span>
+              </div>
             </div>
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="text-xs text-muted-foreground">Image</div>

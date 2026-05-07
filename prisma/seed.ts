@@ -150,21 +150,39 @@ function getAdminPassword(): string {
 
 function decryptSecret(ciphertext: string): string {
   const keyHex = process.env.ENCRYPTION_KEY?.trim() ?? "";
-  if (!/^[0-9a-fA-F]{32}$/.test(keyHex) && !/^[0-9a-fA-F]{64}$/.test(keyHex)) {
-    throw new Error("ENCRYPTION_KEY must be 32 or 64 hex characters");
+  if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+    throw new Error("ENCRYPTION_KEY must be exactly 64 hex characters");
   }
 
-  const [ivHex, dataHex] = ciphertext.split(":");
+  const parts = ciphertext.split(":");
+  const [ivHex, dataHex, tagHex] = parts;
   if (!ivHex || !dataHex || !/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(dataHex)) {
     throw new Error("Invalid ADMIN_PASSWORD_ENC format");
   }
 
-  const normalizedKeyHex = keyHex.padEnd(64, "0");
+  if (parts.length === 2) {
+    const legacyDecipher = createDecipheriv(
+      "aes-256-ctr",
+      Buffer.from(keyHex, "hex"),
+      Buffer.from(ivHex, "hex")
+    );
+    const legacyDecrypted = Buffer.concat([
+      legacyDecipher.update(Buffer.from(dataHex, "hex")),
+      legacyDecipher.final(),
+    ]);
+    return legacyDecrypted.toString("utf-8");
+  }
+
+  if (!tagHex || !/^[0-9a-fA-F]+$/.test(tagHex)) {
+    throw new Error("Invalid ADMIN_PASSWORD_ENC authentication tag format");
+  }
+
   const decipher = createDecipheriv(
-    "aes-256-ctr",
-    Buffer.from(normalizedKeyHex, "hex"),
+    "aes-256-gcm",
+    Buffer.from(keyHex, "hex"),
     Buffer.from(ivHex, "hex")
   );
+  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(dataHex, "hex")),
     decipher.final(),

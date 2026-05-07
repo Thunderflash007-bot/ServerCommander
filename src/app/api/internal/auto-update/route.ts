@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runAutoUpdateCycle } from "@/lib/auto-update";
+import { INTERNAL_RPC_HEADER, isInternalRpcAuthorized } from "@/lib/internal-rpc";
 
 export async function POST(req: NextRequest) {
-  const internalAuditKey = process.env.JWT_SECRET;
-  const providedKey = req.headers.get("x-internal-audit-key");
+  const providedKey = req.headers.get(INTERNAL_RPC_HEADER);
 
-  if (!internalAuditKey || providedKey !== internalAuditKey) {
+  if (!isInternalRpcAuthorized(providedKey)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

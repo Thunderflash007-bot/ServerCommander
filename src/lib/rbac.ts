@@ -51,12 +51,8 @@ function getContainerPerm(
   containerId: string
 ): ContainerPermission | undefined {
   if (!p) return undefined;
-  return p.containerPerms.find(
-    (cp) =>
-      cp.containerId === containerId ||
-      cp.containerId === containerId.substring(0, 12) ||
-      containerId.startsWith(cp.containerId)
-  );
+  const normalizedContainerId = containerId.trim().toLowerCase();
+  return p.containerPerms.find((cp) => cp.containerId.trim().toLowerCase() === normalizedContainerId);
 }
 
 export function canViewContainer(p: FullPermissions | null, containerId: string): boolean {
@@ -188,8 +184,10 @@ export function filterVisibleContainerIds(
 ): string[] {
   if (!p) return [];
   if (p.dockerViewAll) return allContainerIds;
-  const whitelist = new Set(p.containerPerms.filter((cp) => cp.canView).map((cp) => cp.containerId));
-  return allContainerIds.filter(
-    (id) => whitelist.has(id) || whitelist.has(id.substring(0, 12))
+  const whitelist = new Set(
+    p.containerPerms
+      .filter((cp) => cp.canView)
+      .map((cp) => cp.containerId.trim().toLowerCase())
   );
+  return allContainerIds.filter((id) => whitelist.has(id.trim().toLowerCase()));
 }

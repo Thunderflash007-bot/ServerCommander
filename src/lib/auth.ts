@@ -3,7 +3,14 @@ import { cookies } from "next/headers";
 import { db } from "./db";
 
 const SESSION_COOKIE = "sc_session";
-const SESSION_MAX_AGE = parseInt(process.env.SESSION_MAX_AGE ?? "28800", 10);
+
+function getSessionMaxAge(): number {
+  const parsed = parseInt(process.env.SESSION_MAX_AGE ?? "28800", 10);
+  if (!Number.isFinite(parsed) || parsed < 300) {
+    return 28800;
+  }
+  return parsed;
+}
 
 function isCookieSecure(): boolean {
   const raw = (process.env.COOKIE_SECURE ?? "false").toLowerCase();
@@ -57,10 +64,11 @@ type MergedPermissionGroup = {
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
 export async function signToken(payload: SessionPayload): Promise<string> {
+  const sessionMaxAge = getSessionMaxAge();
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${SESSION_MAX_AGE}s`)
+    .setExpirationTime(`${sessionMaxAge}s`)
     .sign(getJwtSecret());
 }
 
@@ -82,7 +90,8 @@ export async function createSession(
   meta?: { userAgent?: string; ipAddress?: string },
   mustChangePassword?: boolean
 ): Promise<string> {
-  const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
+  const sessionMaxAge = getSessionMaxAge();
+  const expiresAt = new Date(Date.now() + sessionMaxAge * 1000);
 
   const session = await db.session.create({
     data: {
@@ -129,13 +138,14 @@ export async function deleteSession(sessionId: string) {
 }
 
 export function setSessionCookie(token: string) {
+  const sessionMaxAge = getSessionMaxAge();
   return {
     name: SESSION_COOKIE,
     value: token,
     httpOnly: true,
     secure: isCookieSecure(),
     sameSite: "lax" as const,
-    maxAge: SESSION_MAX_AGE,
+    maxAge: sessionMaxAge,
     path: "/",
   };
 }

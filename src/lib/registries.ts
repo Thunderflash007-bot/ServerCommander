@@ -1,7 +1,8 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
+import { encryptSecret, decryptSecret } from "@/lib/secrets";
 
 const DATA_DIR = path.join("/app", "data");
 const REGISTRY_FILE = path.join(DATA_DIR, "registries.json");
@@ -16,39 +17,6 @@ type StoredRegistry = {
 };
 
 export type RegistrySummary = Omit<StoredRegistry, "passwordEnc">;
-
-function getEncryptionKeyBuffer() {
-  const keyHex = (process.env.ENCRYPTION_KEY ?? "").trim();
-  if (!/^[0-9a-fA-F]{32}$/.test(keyHex) && !/^[0-9a-fA-F]{64}$/.test(keyHex)) {
-    throw new Error("ENCRYPTION_KEY must be 32 or 64 hex characters to store registry credentials");
-  }
-
-  return Buffer.from(keyHex.padEnd(64, "0"), "hex");
-}
-
-function encryptSecret(value: string) {
-  const iv = randomBytes(16);
-  const cipher = createCipheriv("aes-256-ctr", getEncryptionKeyBuffer(), iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf-8"), cipher.final()]);
-  return `${iv.toString("hex")}:${encrypted.toString("hex")}`;
-}
-
-function decryptSecret(value: string) {
-  const [ivHex, payloadHex] = value.split(":");
-  if (!ivHex || !payloadHex) {
-    throw new Error("Invalid encrypted secret format");
-  }
-
-  const decipher = createDecipheriv(
-    "aes-256-ctr",
-    getEncryptionKeyBuffer(),
-    Buffer.from(ivHex, "hex")
-  );
-  return Buffer.concat([
-    decipher.update(Buffer.from(payloadHex, "hex")),
-    decipher.final(),
-  ]).toString("utf-8");
-}
 
 async function ensureDataDir() {
   await fs.mkdir(DATA_DIR, { recursive: true });

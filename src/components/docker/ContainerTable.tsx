@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Play, Square, RotateCcw, Trash2, FileText, Eye, TerminalSquare } from "lucide-react";
 import type { ContainerSummary } from "@/lib/docker";
 import type { FullPermissions } from "@/lib/rbac";
+import { ContainerStatusChip } from "@/components/docker/ContainerStatusChip";
 import {
   canStartContainer,
   canStopContainer,
@@ -19,23 +20,6 @@ interface ContainerTableProps {
   containers: ContainerSummary[];
   permissions: FullPermissions | null;
   compact?: boolean;
-}
-
-function StateChip({ state }: { state: string }) {
-  const map: Record<string, string> = {
-    running: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
-    exited: "bg-red-500/15 text-red-400 border-red-500/20",
-    paused: "bg-yellow-500/15 text-yellow-400 border-yellow-500/20",
-    restarting: "bg-blue-500/15 text-blue-400 border-blue-500/20",
-    dead: "bg-red-500/15 text-red-400 border-red-500/20",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${map[state] ?? "bg-muted text-muted-foreground"}`}
-    >
-      {state}
-    </span>
-  );
 }
 
 function formatPortMappings(
@@ -127,7 +111,7 @@ export function ContainerTable({ containers, permissions, compact }: ContainerTa
                     </td>
                   )}
                   <td className="px-4 py-3">
-                    <StateChip state={c.state} />
+                    <ContainerStatusChip state={c.state} statusText={c.status} />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">

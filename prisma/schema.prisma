@@ -238,6 +238,7 @@ model SshSettings {
   passwordEnc      String?
   privateKeyEnc    String?
   keyPassphraseEnc String?
+  hostKeySha256    String?
   sftpRoot         String?
   updatedAt        DateTime @updatedAt
   createdAt        DateTime @default(now())

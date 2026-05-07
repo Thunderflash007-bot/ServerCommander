@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { isRequestFromTrustedProxy } from "@/lib/network";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -7,9 +8,10 @@ function normalizeHost(value: string | null): string | null {
 }
 
 function getExpectedOrigin(req: NextRequest): string {
-  const forwardedProto = req.headers.get("x-forwarded-proto");
+  const trustForwardedHeaders = isRequestFromTrustedProxy(req);
+  const forwardedProto = trustForwardedHeaders ? req.headers.get("x-forwarded-proto") : null;
   const protocol = forwardedProto?.split(",")[0]?.trim() || req.nextUrl.protocol.replace(":", "");
-  const forwardedHost = req.headers.get("x-forwarded-host");
+  const forwardedHost = trustForwardedHeaders ? req.headers.get("x-forwarded-host") : null;
   const host = normalizeHost(forwardedHost?.split(",")[0] ?? req.headers.get("host"));
 
   if (!host) {

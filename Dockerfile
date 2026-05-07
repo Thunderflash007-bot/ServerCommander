@@ -61,11 +61,14 @@ RUN mkdir -p /app/data
 # Host filesystem mount point
 RUN mkdir -p /host_system
 
+# Allow the unprivileged runtime user to access app and mount directories
+RUN chown -R node:node /app /host_system
+
 # Entrypoint script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-USER root
+USER node
 
 EXPOSE 3000
 

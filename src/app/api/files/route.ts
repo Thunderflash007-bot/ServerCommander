@@ -7,11 +7,72 @@ import fs from "fs/promises";
 import path from "path";
 
 const HOST_MOUNT = process.env.HOST_FS_MOUNT ?? "/host_system";
+const HOST_MOUNT_FALLBACK = path.resolve(HOST_MOUNT);
+let hostMountRealPathCache: string | null = null;
 
-function resolveSafePath(requestedPath: string): string {
-  // Ensure path stays within the host mount
-  const normalized = path.normalize(path.join(HOST_MOUNT, requestedPath));
-  if (!normalized.startsWith(HOST_MOUNT)) {
+async function getHostMountRealPath(): Promise<string> {
+  if (hostMountRealPathCache) return hostMountRealPathCache;
+
+  try {
+    hostMountRealPathCache = path.resolve(await fs.realpath(HOST_MOUNT));
+  } catch {
+    hostMountRealPathCache = HOST_MOUNT_FALLBACK;
+  }
+
+  return hostMountRealPathCache;
+}
+
+function assertWithinHostMount(basePath: string, targetPath: string) {
+  const relative = path.relative(basePath, targetPath);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    return;
+  }
+  throw new Error("Path traversal detected");
+}
+
+async function resolveExistingAncestor(realPath: string): Promise<string> {
+  let current = path.dirname(realPath);
+  while (true) {
+    try {
+      return path.resolve(await fs.realpath(current));
+    } catch (error) {
+      const e = error as NodeJS.ErrnoException;
+      if (e.code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw new Error("Path traversal detected");
+      }
+      current = parent;
+    }
+  }
+}
+
+async function resolveSafePath(requestedPath: string, options?: { allowMissing?: boolean }): Promise<string> {
+  const basePath = await getHostMountRealPath();
+  const virtualPath = normalizeVirtualPath(requestedPath);
+  const candidatePath = path.resolve(basePath, `.${virtualPath}`);
+  assertWithinHostMount(basePath, candidatePath);
+
+  try {
+    const resolvedPath = path.resolve(await fs.realpath(candidatePath));
+    assertWithinHostMount(basePath, resolvedPath);
+    return resolvedPath;
+  } catch (error) {
+    const e = error as NodeJS.ErrnoException;
+    if (e.code !== "ENOENT" || !options?.allowMissing) {
+      throw error;
+    }
+
+    const existingAncestor = await resolveExistingAncestor(candidatePath);
+    assertWithinHostMount(basePath, existingAncestor);
+    return candidatePath;
+  }
+}
+
+function resolveJoinedVirtualPath(basePath: string, nextPath: string): string {
+  const joined = path.posix.join(normalizeVirtualPath(basePath), nextPath);
+  const normalized = normalizeVirtualPath(joined);
+  if (!normalized.startsWith("/")) {
     throw new Error("Path traversal detected");
   }
   return normalized;
@@ -124,7 +185,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const realPath = resolveSafePath(virtualPath);
+    const realPath = await resolveSafePath(virtualPath);
     const stat = await fs.stat(realPath);
 
     if (mode === "download") {
@@ -153,9 +214,10 @@ export async function GET(req: NextRequest) {
       const entries = await fs.readdir(realPath, { withFileTypes: true });
       const items = await Promise.all(
         entries.map(async (entry) => {
-          const childVirtualPath = path.join(virtualPath, entry.name);
+          const childVirtualPath = normalizeVirtualPath(path.posix.join(virtualPath, entry.name));
           try {
-            const childStat = await fs.stat(path.join(realPath, entry.name));
+            const childRealPath = await resolveSafePath(childVirtualPath);
+            const childStat = await fs.stat(childRealPath);
             return {
               name: entry.name,
               path: childVirtualPath,
@@ -246,9 +308,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, uploaded: uploads.length });
     }
 
-    const realDir = resolveSafePath(virtualDir);
+    const realDir = await resolveSafePath(virtualDir, { allowMissing: true });
     for (const upload of uploads) {
-      const realPath = path.join(realDir, upload.relativePath.replace(/^\//, ""));
+      const uploadVirtualPath = resolveJoinedVirtualPath(virtualDir, upload.relativePath.replace(/^\//, ""));
+      const realPath = await resolveSafePath(uploadVirtualPath, { allowMissing: true });
       await fs.mkdir(path.dirname(realPath), { recursive: true });
       await fs.writeFile(realPath, upload.buffer);
     }
@@ -270,7 +333,7 @@ export async function POST(req: NextRequest) {
         await sftp.mkdir(await resolveRemotePath(virtualPath), true);
       });
     } else {
-      await fs.mkdir(resolveSafePath(virtualPath), { recursive: true });
+      await fs.mkdir(await resolveSafePath(virtualPath, { allowMissing: true }), { recursive: true });
     }
     return NextResponse.json({ success: true, path: virtualPath });
   }
@@ -281,7 +344,9 @@ export async function POST(req: NextRequest) {
         await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), await resolveRemotePath(virtualPath));
       });
     } else {
-      await fs.writeFile(resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
+      const realPath = await resolveSafePath(virtualPath, { allowMissing: true });
+      await fs.mkdir(path.dirname(realPath), { recursive: true });
+      await fs.writeFile(realPath, String(body.content ?? ""), "utf-8");
     }
     return NextResponse.json({ success: true, path: virtualPath });
   }
@@ -322,7 +387,10 @@ export async function PATCH(req: NextRequest) {
         await sftp.rename(await resolveRemotePath(virtualPath), await resolveRemotePath(targetVirtualPath));
       });
     } else {
-      await fs.rename(resolveSafePath(virtualPath), resolveSafePath(targetVirtualPath));
+      await fs.rename(
+        await resolveSafePath(virtualPath),
+        await resolveSafePath(targetVirtualPath, { allowMissing: true })
+      );
     }
     return NextResponse.json({ success: true, path: targetVirtualPath });
   }
@@ -336,7 +404,7 @@ export async function PATCH(req: NextRequest) {
         await sftp.put(Buffer.from(String(body.content ?? ""), "utf-8"), await resolveRemotePath(virtualPath));
       });
     } else {
-      await fs.writeFile(resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
+      await fs.writeFile(await resolveSafePath(virtualPath), String(body.content ?? ""), "utf-8");
     }
     return NextResponse.json({ success: true, path: virtualPath });
   }
@@ -377,7 +445,7 @@ export async function DELETE(req: NextRequest) {
         }
       });
     } else {
-      const realPath = resolveSafePath(virtualPath);
+      const realPath = await resolveSafePath(virtualPath);
       const stat = await fs.stat(realPath);
       if (stat.isDirectory()) {
         await fs.rm(realPath, { recursive: true });

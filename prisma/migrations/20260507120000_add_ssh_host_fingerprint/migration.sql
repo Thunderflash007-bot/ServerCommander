@@ -1,0 +1,1 @@
+ALTER TABLE "SshSettings" ADD COLUMN "hostKeySha256" TEXT;

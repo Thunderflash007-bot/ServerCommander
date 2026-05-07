@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { getClientIp } from "@/lib/network";
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS_PER_IP = 10;
@@ -11,16 +12,6 @@ type LoginRateLimitResult = {
   retryAfterSeconds: number;
   ipAddress: string | null;
 };
-
-function getClientIp(req: NextRequest): string | null {
-  const forwardedFor = req.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    const firstIp = forwardedFor.split(",")[0]?.trim();
-    if (firstIp) return firstIp;
-  }
-
-  return req.ip ?? null;
-}
 
 function getRetryAfterSeconds(oldestAttemptAt: Date | null, now: number) {
   if (!oldestAttemptAt) return Math.ceil(LOGIN_WINDOW_MS / 1000);

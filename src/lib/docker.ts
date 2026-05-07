@@ -6,6 +6,24 @@ declare global {
 }
 
 function createDockerClient(): Dockerode {
+  const dockerHost = (process.env.DOCKER_HOST ?? "").trim();
+  if (dockerHost) {
+    const parsed = new URL(dockerHost);
+    if (parsed.protocol === "tcp:") {
+      return new Dockerode({
+        host: parsed.hostname,
+        port: Number(parsed.port || "2375"),
+        protocol: "http",
+      });
+    }
+
+    if (parsed.protocol === "unix:") {
+      return new Dockerode({ socketPath: parsed.pathname });
+    }
+
+    throw new Error("DOCKER_HOST must use tcp:// or unix://");
+  }
+
   const socketPath = process.env.DOCKER_SOCKET ?? "/var/run/docker.sock";
   return new Dockerode({ socketPath });
 }

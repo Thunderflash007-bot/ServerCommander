@@ -36,6 +36,7 @@ const navItems = [
   { href: "/files", label: "Files", icon: FolderOpen, perm: "fsAccess" as const },
   { href: "/terminal", label: "Terminal", icon: Terminal, perm: "terminalAccess" as const },
   { href: "/profile", label: "Profile", icon: UserCircle2, always: true },
+  { href: "/settings/system", label: "System", icon: Shield, adminOnly: true },
   { href: "/settings/smtp", label: "SMTP", icon: Mail, adminOnly: true },
   { href: "/settings/ssh-sftp", label: "SSH/SFTP", icon: Terminal, adminOnly: true },
   { href: "/users", label: "Users", icon: Users, adminOnly: true },

@@ -6,7 +6,7 @@ import pty from "node-pty";
 import { Client as SSHClient } from "ssh2";
 import { jwtVerify } from "jose";
 import { PrismaClient } from "@prisma/client";
-import { createDecipheriv } from "crypto";
+import { createDecipheriv, timingSafeEqual } from "crypto";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
@@ -24,13 +24,36 @@ function hasContainerExecPermission(perms, containerId) {
   if (!perms || !containerId) return false;
   if (perms.dockerViewAll && perms.terminalAccess) return true;
 
+  const normalizedContainerId = String(containerId).trim().toLowerCase();
+
   return perms.containerPerms.some(
     (entry) =>
       entry.canExec &&
-      (entry.containerId === containerId ||
-        containerId.startsWith(entry.containerId) ||
-        entry.containerId.startsWith(containerId))
+      String(entry.containerId).trim().toLowerCase() === normalizedContainerId
   );
+}
+
+function getInternalRpcSecret() {
+  const secret = (process.env.INTERNAL_RPC_SECRET ?? "").trim();
+  if (!secret) return null;
+  if (secret.length < 32) return null;
+  return secret;
+}
+
+function normalizeSshHostFingerprint(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const withoutPrefix = raw.replace(/^SHA256:/i, "");
+  if (!/^[A-Za-z0-9+/=]+$/.test(withoutPrefix)) {
+    throw new Error("SSH host fingerprint must be SHA256 base64 (optionally prefixed with 'SHA256:')");
+  }
+  return withoutPrefix;
+}
+
+function isSameFingerprint(actualHash, expectedHash) {
+  const a = Buffer.from(actualHash, "utf-8");
+  const b = Buffer.from(expectedHash, "utf-8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function getJwtSecret() {
@@ -62,6 +85,7 @@ async function loadSshRuntimeSettings() {
       passwordEnc: dbSettings.passwordEnc?.trim() ?? "",
       privateKeyEnc: dbSettings.privateKeyEnc?.trim() ?? "",
       keyPassphraseEnc: dbSettings.keyPassphraseEnc?.trim() ?? "",
+      hostKeySha256: dbSettings.hostKeySha256?.trim() ?? "",
     };
   }
 
@@ -73,6 +97,7 @@ async function loadSshRuntimeSettings() {
     passwordEnc: process.env.SSH_PASSWORD_ENC?.trim() ?? "",
     privateKeyEnc: process.env.SSH_PRIVATE_KEY_ENC?.trim() ?? "",
     keyPassphraseEnc: process.env.SSH_KEY_PASSPHRASE_ENC?.trim() ?? "",
+    hostKeySha256: process.env.SSH_HOST_KEY_SHA256?.trim() ?? "",
   };
 }
 
@@ -109,6 +134,7 @@ async function getSshRuntimeConfig() {
   const privateKey = getSshPrivateKey(settings.privateKeyEnc);
   const passphrase = getSshKeyPassphrase(settings.keyPassphraseEnc);
   const port = Number(settings.port ?? 22);
+  const hostKeySha256 = normalizeSshHostFingerprint(settings.hostKeySha256);
 
   if (!host || !username || (!password && !privateKey)) {
     throw new Error("SSH backend is enabled but host/username and private key or password are required");
@@ -125,26 +151,45 @@ async function getSshRuntimeConfig() {
     privateKey: privateKey || undefined,
     passphrase: privateKey ? passphrase || undefined : undefined,
     port,
+    hostKeySha256: hostKeySha256 || undefined,
   };
 }
 
 function decryptSecret(ciphertext) {
   const keyHex = (process.env.ENCRYPTION_KEY ?? "").trim();
-  if (!/^[0-9a-fA-F]{32}$/.test(keyHex) && !/^[0-9a-fA-F]{64}$/.test(keyHex)) {
-    throw new Error("ENCRYPTION_KEY must be 32 or 64 hex characters");
+  if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+    throw new Error("ENCRYPTION_KEY must be exactly 64 hex characters");
   }
 
-  const [ivHex, dataHex] = ciphertext.split(":");
+  const parts = ciphertext.split(":");
+  const [ivHex, dataHex, tagHex] = parts;
   if (!ivHex || !dataHex || !/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(dataHex)) {
     throw new Error("Invalid SSH_PASSWORD_ENC format");
   }
 
-  const normalizedKeyHex = keyHex.padEnd(64, "0");
+  if (parts.length === 2) {
+    const legacyDecipher = createDecipheriv(
+      "aes-256-ctr",
+      Buffer.from(keyHex, "hex"),
+      Buffer.from(ivHex, "hex")
+    );
+    const legacyDecrypted = Buffer.concat([
+      legacyDecipher.update(Buffer.from(dataHex, "hex")),
+      legacyDecipher.final(),
+    ]);
+    return legacyDecrypted.toString("utf-8");
+  }
+
+  if (!tagHex || !/^[0-9a-fA-F]+$/.test(tagHex)) {
+    throw new Error("Invalid SSH_PASSWORD_ENC authentication tag format");
+  }
+
   const decipher = createDecipheriv(
-    "aes-256-ctr",
-    Buffer.from(normalizedKeyHex, "hex"),
+    "aes-256-gcm",
+    Buffer.from(keyHex, "hex"),
     Buffer.from(ivHex, "hex")
   );
+  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(dataHex, "hex")),
     decipher.final(),
@@ -182,7 +227,8 @@ app.prepare().then(() => {
   });
 
   async function triggerAutoUpdateCycle() {
-    if (!process.env.JWT_SECRET) {
+    const internalRpcSecret = getInternalRpcSecret();
+    if (!internalRpcSecret) {
       return;
     }
 
@@ -190,13 +236,17 @@ app.prepare().then(() => {
       await fetch(`http://127.0.0.1:${port}/api/internal/auto-update`, {
         method: "POST",
         headers: {
-          "x-internal-audit-key": process.env.JWT_SECRET,
+          "x-internal-rpc-secret": internalRpcSecret,
         },
       });
     } catch (error) {
       console.error("[auto-update-runner]", error);
     }
   }
+
+  const autoUpdateTimer = setInterval(() => {
+    void triggerAutoUpdateCycle();
+  }, autoUpdateIntervalMs);
 
   const io = new SocketIOServer(httpServer, {
     path: "/api/socket",
@@ -265,9 +315,6 @@ app.prepare().then(() => {
       return;
     }
 
-    setInterval(() => {
-      void triggerAutoUpdateCycle();
-    }, autoUpdateIntervalMs);
     userSessionCount.set(userId, current + 1);
 
     const cwd = process.env.HOST_FS_MOUNT ?? "/host_system";
@@ -285,6 +332,26 @@ app.prepare().then(() => {
           finish([sshCfg.password ?? ""]);
         });
         sshConn.on("ready", () => {
+          if (readOnly) {
+            sshConn.exec(
+              "sh -lc 'tail -n 200 -f /var/log/syslog 2>/dev/null || tail -n 200 -f /var/log/messages 2>/dev/null || dmesg -w'",
+              (err, stream) => {
+                if (err) {
+                  socket.emit("output", `\r\n\x1b[31mSSH log stream failed: ${err.message}\x1b[0m\r\n`);
+                  socket.disconnect();
+                  return;
+                }
+                sshStream = stream;
+                stream.on("data", (data) => socket.emit("output", data.toString("utf-8")));
+                stream.on("close", () => {
+                  socket.emit("output", "\r\n\x1b[33m[SSH log stream closed]\x1b[0m\r\n");
+                  socket.disconnect();
+                });
+              }
+            );
+            return;
+          }
+
           sshConn.shell(
             {
               term: "xterm-256color",
@@ -318,6 +385,12 @@ app.prepare().then(() => {
           passphrase: sshCfg.passphrase,
           tryKeyboard: !sshCfg.privateKey,
           readyTimeout: 15000,
+          ...(sshCfg.hostKeySha256
+            ? {
+                hostHash: "sha256",
+                hostVerifier: (hashedKey) => isSameFingerprint(hashedKey, sshCfg.hostKeySha256),
+              }
+            : {}),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -327,10 +400,34 @@ app.prepare().then(() => {
       }
     } else {
       ptyProcess =
-          mode === "container"
+          readOnly
             ? pty.spawn(
                 "docker",
-                ["exec", "-u", "0", "-it", containerId, "/bin/sh"],
+                [
+                  "logs",
+                  "-f",
+                  "--tail",
+                  "200",
+                  mode === "container"
+                    ? containerId
+                    : (process.env.SELF_CONTAINER_NAME?.trim() || process.env.HOSTNAME?.trim() || "servercommander"),
+                ],
+                {
+                  name: "xterm-256color",
+                  cols: 80,
+                  rows: 24,
+                  cwd,
+                  env: {
+                    ...process.env,
+                    TERM: "xterm-256color",
+                    COLORTERM: "truecolor",
+                  },
+                }
+              )
+            : mode === "container"
+            ? pty.spawn(
+                "docker",
+                ["exec", "-it", containerId, "/bin/sh"],
               {
                 name: "xterm-256color",
                 cols: 80,
@@ -413,6 +510,7 @@ app.prepare().then(() => {
   });
 
   const shutdown = async () => {
+    clearInterval(autoUpdateTimer);
     await prisma.$disconnect().catch(() => null);
     process.exit(0);
   };

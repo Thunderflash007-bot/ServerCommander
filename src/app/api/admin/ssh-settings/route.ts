@@ -33,6 +33,7 @@ export async function GET() {
       port: ssh?.port ?? 22,
       username: ssh?.username ?? "",
       sftpRoot: ssh?.sftpRoot ?? "/",
+      hostKeySha256: (ssh as { hostKeySha256?: string | null })?.hostKeySha256 ?? "",
       authMode: ssh?.privateKeyEnc ? "key" : "password",
       hasPassword: !!ssh?.passwordEnc,
       hasPrivateKey: !!ssh?.privateKeyEnc,
@@ -52,6 +53,7 @@ export async function PATCH(req: NextRequest) {
     port?: number;
     username?: string;
     sftpRoot?: string;
+    hostKeySha256?: string;
     authMode?: AuthMode;
     password?: string;
     privateKey?: string;
@@ -64,6 +66,7 @@ export async function PATCH(req: NextRequest) {
   const host = String(body.host ?? "").trim();
   const username = String(body.username ?? "").trim();
   const sftpRoot = String(body.sftpRoot ?? "/").trim() || "/";
+  const hostKeySha256 = String(body.hostKeySha256 ?? "").trim();
   const port = toPort(body.port ?? 22);
   const authMode: AuthMode = body.authMode === "key" ? "key" : "password";
 
@@ -108,6 +111,7 @@ export async function PATCH(req: NextRequest) {
       passwordEnc,
       privateKeyEnc,
       keyPassphraseEnc,
+      hostKeySha256: hostKeySha256 || null,
       sftpRoot,
     },
     update: {
@@ -118,6 +122,7 @@ export async function PATCH(req: NextRequest) {
       passwordEnc,
       privateKeyEnc,
       keyPassphraseEnc,
+      hostKeySha256: hostKeySha256 || null,
       sftpRoot,
     },
   });

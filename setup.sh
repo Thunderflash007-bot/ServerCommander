@@ -39,6 +39,7 @@ require_cmd() {
 }
 
 require_cmd docker
+require_cmd node
 
 if docker compose version &>/dev/null; then
   COMPOSE_CMD=(docker compose)
@@ -226,10 +227,12 @@ gen_hex() { head -c "$1" /dev/urandom | xxd -p | tr -d '\n' | cut -c1-"$((2 * $1
 
 SESSION_SECRET="$(gen_hex 32)"
 JWT_SECRET="$(gen_hex 32)"
+INTERNAL_RPC_SECRET="$(gen_hex 32)"
 ENCRYPTION_KEY="$(gen_hex 32)"
 
 success "SESSION_SECRET generated (64-char hex)"
 success "JWT_SECRET generated (64-char hex)"
+success "INTERNAL_RPC_SECRET generated (64-char hex)"
 success "ENCRYPTION_KEY generated (64-char hex)"
 
 # ── Write .env File ───────────────────────────────────────────────────────────
@@ -249,16 +252,23 @@ escape_env() {
 
 encrypt_secret_env() {
   local plaintext="$1"
-  local iv
-  local cipher_hex
+  PLAINTEXT="$plaintext" ENCRYPTION_KEY="$ENCRYPTION_KEY" node <<'NODE'
+const { createCipheriv, randomBytes } = require('crypto');
 
-  if ! command -v openssl &>/dev/null; then
-    fatal "'openssl' is required to encrypt SSH password for .env storage"
-  fi
+const keyHex = (process.env.ENCRYPTION_KEY || '').trim();
+if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+  process.stderr.write('ENCRYPTION_KEY must be exactly 64 hex characters\n');
+  process.exit(1);
+}
 
-  iv="$(head -c 16 /dev/urandom | xxd -p | tr -d '\n')"
-  cipher_hex="$(printf '%s' "$plaintext" | openssl enc -aes-256-ctr -K "$ENCRYPTION_KEY" -iv "$iv" -nosalt -e | xxd -p -c 9999 | tr -d '\n')"
-  printf '%s:%s' "$iv" "$cipher_hex"
+const plaintext = process.env.PLAINTEXT || '';
+const iv = randomBytes(12);
+const cipher = createCipheriv('aes-256-gcm', Buffer.from(keyHex, 'hex'), iv);
+const encrypted = Buffer.concat([cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final()]);
+const tag = cipher.getAuthTag();
+
+process.stdout.write(`${iv.toString('hex')}:${encrypted.toString('hex')}:${tag.toString('hex')}`);
+NODE
 }
 
 ADMIN_USERNAME_ESCAPED="$(escape_env "$ADMIN_USERNAME")"
@@ -304,11 +314,13 @@ cat > "$ENV_FILE" <<EOF
 
 NODE_ENV=production
 NEXT_PUBLIC_APP_NAME="ServerCommander OS"
+NEXT_PUBLIC_APP_VERSION="1.0.0"
 PORT=3000
 HOST_PORT=${APP_PORT}
 
 SESSION_SECRET=${SESSION_SECRET}
 JWT_SECRET=${JWT_SECRET}
+INTERNAL_RPC_SECRET=${INTERNAL_RPC_SECRET}
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
 DATABASE_URL="file:/app/data/servercommander.db"
@@ -316,8 +328,10 @@ DATABASE_URL="file:/app/data/servercommander.db"
 ADMIN_USERNAME="${ADMIN_USERNAME_ESCAPED}"
 ADMIN_PASSWORD_ENC="${ADMIN_PASSWORD_ENC_ESCAPED}"
 
-DOCKER_SOCKET=/var/run/docker.sock
+DOCKER_HOST=tcp://docker-socket-proxy:2375
 HOST_FS_MOUNT=/host_system
+HOST_FS_SOURCE=/srv/servercommander
+TRUSTED_PROXIES=
 
 SSH_ENABLED=${SSH_ENABLED}
 SSH_HOST="${SSH_HOST_ESCAPED}"
@@ -326,6 +340,7 @@ SSH_USERNAME="${SSH_USERNAME_ESCAPED}"
 SSH_PASSWORD_ENC="${SSH_PASSWORD_ENC_ESCAPED}"
 SSH_PRIVATE_KEY_ENC="${SSH_PRIVATE_KEY_ENC_ESCAPED}"
 SSH_KEY_PASSPHRASE_ENC="${SSH_KEY_PASSPHRASE_ENC_ESCAPED}"
+SSH_HOST_KEY_SHA256=""
 SSH_SFTP_ROOT="${SSH_SFTP_ROOT_ESCAPED}"
 
 SMTP_ENABLED=${SMTP_ENABLED}
@@ -361,18 +376,27 @@ header "Waiting for application to become healthy"
 
 MAX_WAIT=120
 WAITED=0
-until curl -sf "http://localhost:${APP_PORT}/api/auth/me" > /dev/null 2>&1; do
+HEALTH_URL="http://localhost:${APP_PORT}/login"
+HEALTH_OK=false
+until curl -sf "$HEALTH_URL" > /dev/null 2>&1; do
   WAITED=$((WAITED + 3))
   if (( WAITED >= MAX_WAIT )); then
-    warn "Health check timed out after ${MAX_WAIT}s. Check logs: ${COMPOSE_LABEL} logs -f"
+    warn "Health check timed out after ${MAX_WAIT}s on ${HEALTH_URL}. Check logs: ${COMPOSE_LABEL} logs -f"
     break
   fi
   echo -n "."
   sleep 3
 done
+if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+  HEALTH_OK=true
+fi
 echo
 
-success "Application is healthy!"
+if [[ "$HEALTH_OK" == "true" ]]; then
+  success "Application is healthy!"
+else
+  warn "Application did not become healthy during setup wait window."
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo -e "\n${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${RESET}"
