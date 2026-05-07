@@ -97,6 +97,67 @@ if ! [[ "$APP_PORT" =~ ^[0-9]+$ ]] || (( APP_PORT < 1 || APP_PORT > 65535 )); th
 fi
 success "Application port: $APP_PORT"
 
+# ── Trusted Proxy Configuration ───────────────────────────────────────────────
+TRUSTED_PROXIES_CONFIGURED=""
+
+detect_trusted_proxy() {
+  # Check for nginx (process or systemd service)
+  if command -v systemctl &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null; then
+    echo "nginx (systemd)"
+    return 0
+  fi
+  if pgrep -x nginx &>/dev/null 2>&1; then
+    echo "nginx (process)"
+    return 0
+  fi
+  # Check for Caddy
+  if command -v systemctl &>/dev/null && systemctl is-active --quiet caddy 2>/dev/null; then
+    echo "caddy"
+    return 0
+  fi
+  if pgrep -x caddy &>/dev/null 2>&1; then
+    echo "caddy (process)"
+    return 0
+  fi
+  echo ""
+}
+
+echo ""
+echo "  Trusted Proxy: If ServerCommander runs behind a reverse proxy (nginx,"
+echo "  Caddy, Traefik, …), enter its IP so that X-Forwarded-For headers are"
+echo "  trusted for rate-limiting and audit logs."
+echo "  Options:"
+echo "    detect  — auto-detect a local reverse proxy (nginx/Caddy)"
+echo "    <ip>    — enter proxy IP manually, e.g. 127.0.0.1 or 192.168.1.1"
+echo "    (empty) — no trusted proxy / direct access"
+echo ""
+read -rp "  Trusted proxy IP or 'detect' []: " TRUSTED_PROXY_INPUT
+TRUSTED_PROXY_INPUT="${TRUSTED_PROXY_INPUT:-}"
+
+if [[ "${TRUSTED_PROXY_INPUT,,}" == "detect" ]]; then
+  DETECTED_PROXY=$(detect_trusted_proxy)
+  if [[ -n "$DETECTED_PROXY" ]]; then
+    TRUSTED_PROXIES_CONFIGURED="127.0.0.1"
+    success "Detected $DETECTED_PROXY — using 127.0.0.1 as trusted proxy"
+  else
+    warn "No known reverse proxy detected on this host. TRUSTED_PROXIES left empty."
+    TRUSTED_PROXIES_CONFIGURED=""
+  fi
+elif [[ -n "$TRUSTED_PROXY_INPUT" ]]; then
+  # Basic IP validation (single IP or CIDR)
+  if [[ "$TRUSTED_PROXY_INPUT" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] || \
+     [[ "$TRUSTED_PROXY_INPUT" =~ ^::1$ ]]; then
+    TRUSTED_PROXIES_CONFIGURED="$TRUSTED_PROXY_INPUT"
+    success "Trusted proxy set to: $TRUSTED_PROXIES_CONFIGURED"
+  else
+    warn "Input '$TRUSTED_PROXY_INPUT' does not look like a valid IP/CIDR — TRUSTED_PROXIES left empty."
+    TRUSTED_PROXIES_CONFIGURED=""
+  fi
+else
+  TRUSTED_PROXIES_CONFIGURED=""
+  success "No trusted proxy configured (direct access mode)"
+fi
+
 # ── SSH/SFTP Backend Configuration ───────────────────────────────────────────
 header "Remote Access Backend"
 
@@ -331,7 +392,7 @@ ADMIN_PASSWORD_ENC="${ADMIN_PASSWORD_ENC_ESCAPED}"
 DOCKER_HOST=tcp://docker-socket-proxy:2375
 HOST_FS_MOUNT=/host_system
 HOST_FS_SOURCE=/srv/servercommander
-TRUSTED_PROXIES=
+TRUSTED_PROXIES=${TRUSTED_PROXIES_CONFIGURED}
 
 SSH_ENABLED=${SSH_ENABLED}
 SSH_HOST="${SSH_HOST_ESCAPED}"
